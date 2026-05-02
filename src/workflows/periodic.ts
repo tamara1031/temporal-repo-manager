@@ -5,7 +5,7 @@ import {
   ChildWorkflowCancellationType,
   ParentClosePolicy,
 } from '@temporalio/workflow';
-import { cheap, heavy } from './proxies';
+import { bigCodex, cheap, heavy } from './proxies';
 import { robustPRMergeWorkflow } from './pr-lifecycle';
 import { buildRefactorPrompt } from './refactor-prompt';
 
@@ -43,7 +43,7 @@ export async function periodicRefactorWorkflow(
   });
 
   try {
-    const result = await heavy.codexActivity({
+    const result = await bigCodex.codexActivity({
       workdir: clone.workdir,
       prompt: buildRefactorPrompt(input.refactorBrief),
     });

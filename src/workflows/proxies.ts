@@ -15,7 +15,7 @@ export const cheap = proxyActivities<typeof activities>({
   },
 });
 
-/** Heavy or external work (clone, push, codex). */
+/** Heavy or external work (clone, push). */
 export const heavy = proxyActivities<typeof activities>({
   startToCloseTimeout: '20 minutes',
   retry: {
@@ -23,6 +23,24 @@ export const heavy = proxyActivities<typeof activities>({
     backoffCoefficient: 2,
     maximumInterval: '5 minutes',
     maximumAttempts: 4,
+    nonRetryableErrorTypes: [...NON_RETRYABLE],
+  },
+});
+
+/**
+ * Long-running codex orchestration. The Parliament-style refactor pipeline
+ * spawns ~30 subagent calls inside a single `codex exec`, which can stretch
+ * past 20 minutes. exec.ts heartbeats every 5s while codex is running, so
+ * the heartbeat timeout can stay tight.
+ */
+export const bigCodex = proxyActivities<typeof activities>({
+  startToCloseTimeout: '90 minutes',
+  heartbeatTimeout: '2 minutes',
+  retry: {
+    initialInterval: '30s',
+    backoffCoefficient: 2,
+    maximumInterval: '5 minutes',
+    maximumAttempts: 2,
     nonRetryableErrorTypes: [...NON_RETRYABLE],
   },
 });

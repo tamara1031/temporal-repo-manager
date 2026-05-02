@@ -65,6 +65,11 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
 
+# Codex subagent definitions (Parliament-style refactor pipeline) and global
+# codex config. The CLI auto-discovers agents from $HOME/.codex/agents/.
+COPY --chown=agent:agent agents/ /home/agent/.codex/agents/
+COPY --chown=agent:agent codex-config/config.toml /home/agent/.codex/config.toml
+
 USER agent
 WORKDIR /app
 

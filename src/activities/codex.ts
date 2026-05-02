@@ -26,7 +26,14 @@ export interface CodexOutput {
   changedFiles: string[];
 }
 
-const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
+/**
+ * Internal exec timeout. Larger than the legacy 30-min default because the
+ * orchestrator prompt now runs a Plan → Implement → Parliament-Review pipeline
+ * with ~30 subagent spawns. Keep this slightly below the workflow proxy's
+ * `startToCloseTimeout` (currently 90 min in `bigCodex`) so codex shuts itself
+ * down cleanly before Temporal kills the activity.
+ */
+const DEFAULT_TIMEOUT_MS = 80 * 60 * 1000;
 
 /**
  * Path to the auth file produced by `codex login` (browser-based ChatGPT login).
@@ -76,7 +83,17 @@ export async function codexActivity(input: CodexInput): Promise<CodexOutput> {
   // The Worker container is itself the security boundary, so we let codex run
   // shell tools without bubblewrap (which otherwise fails with
   // `bwrap: No permissions to create a new namespace` inside Docker).
-  const args = ['exec', '--dangerously-bypass-approvals-and-sandbox'];
+  // `--output-last-message` lets us capture the orchestrator's *final* reply
+  // separately from the noisy combined stdout (which contains every subagent
+  // spawn / wait line). The final reply is what we want as PR body.
+  const lastMsgDir = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-last-msg-'));
+  const lastMsgPath = path.join(lastMsgDir, 'final.md');
+  const args = [
+    'exec',
+    '--dangerously-bypass-approvals-and-sandbox',
+    '--output-last-message',
+    lastMsgPath,
+  ];
   if (input.model) args.push('--model', input.model);
 
   const parts = [input.systemPrompt?.trim(), input.context?.trim(), input.prompt.trim()]
@@ -86,35 +103,52 @@ export async function codexActivity(input: CodexInput): Promise<CodexOutput> {
   }
   const fullPrompt = parts.join('\n\n');
 
-  const res = await execCommand('codex', args, {
-    cwd: input.workdir,
-    input: fullPrompt,
-    timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    env: {
-      // Codex CLI honors HOME (and CODEX_HOME) to locate auth.json.
-      HOME: process.env.HOME ?? os.homedir(),
-      ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}),
-      CODEX_NON_INTERACTIVE: '1',
-      // Defense-in-depth: the prompt forbids `git push` / `gh`, but with sandbox
-      // bypassed we also strip GitHub credentials from codex's child shell so a
-      // disobedient model cannot exfiltrate or push with them.
-      GITHUB_TOKEN: undefined,
-      GH_TOKEN: undefined,
-    },
-  });
-
-  if (res.code !== 0) {
-    throw ApplicationFailure.create({
-      message: `codex exited ${res.code}: ${res.stderr.slice(0, 1024)}`,
-      type: 'CodexInvocationError',
-      details: [res.stdout.slice(0, 4096), res.stderr.slice(0, 4096)],
+  try {
+    const res = await execCommand('codex', args, {
+      cwd: input.workdir,
+      input: fullPrompt,
+      timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      env: {
+        // Codex CLI honors HOME (and CODEX_HOME) to locate auth.json.
+        HOME: process.env.HOME ?? os.homedir(),
+        ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}),
+        CODEX_NON_INTERACTIVE: '1',
+        // Defense-in-depth: the prompt forbids `git push` / `gh`, but with sandbox
+        // bypassed we also strip GitHub credentials from codex's child shell so a
+        // disobedient model cannot exfiltrate or push with them.
+        GITHUB_TOKEN: undefined,
+        GH_TOKEN: undefined,
+      },
     });
-  }
 
-  const changedFiles = await changedFilesIn(input.workdir);
-  return {
-    message: res.stdout.trim().slice(0, 16 * 1024),
-    raw: res.stdout,
-    changedFiles,
-  };
+    if (res.code !== 0) {
+      throw ApplicationFailure.create({
+        message: `codex exited ${res.code}: ${res.stderr.slice(0, 1024)}`,
+        type: 'CodexInvocationError',
+        details: [res.stdout.slice(0, 4096), res.stderr.slice(0, 4096)],
+      });
+    }
+
+    const lastMessage = await readLastMessage(lastMsgPath);
+    const changedFiles = await changedFilesIn(input.workdir);
+    return {
+      // Prefer the orchestrator's clean final reply for downstream consumers
+      // (PR body); fall back to stdout when codex didn't write the file.
+      message: (lastMessage ?? res.stdout).trim().slice(0, 16 * 1024),
+      raw: res.stdout,
+      changedFiles,
+    };
+  } finally {
+    await fs.rm(lastMsgDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function readLastMessage(p: string): Promise<string | undefined> {
+  try {
+    const buf = await fs.readFile(p, 'utf8');
+    const trimmed = buf.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  } catch {
+    return undefined;
+  }
 }
