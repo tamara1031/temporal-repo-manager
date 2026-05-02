@@ -10,12 +10,15 @@ export interface RobustPRMergeInput {
   prBody: string;
   /** Hard cap on CI-fail / conflict iterations to prevent infinite loops. */
   maxFixIterations?: number;
+  /** When false, run CI / self-heal but stop before merging. Defaults to true. */
+  autoMerge?: boolean;
 }
 
 export interface RobustPRMergeOutput {
   prNumber: number;
   prUrl: string;
   iterations: number;
+  merged: boolean;
 }
 
 /**
@@ -29,6 +32,7 @@ export async function robustPRMergeWorkflow(
   input: RobustPRMergeInput,
 ): Promise<RobustPRMergeOutput> {
   const maxIters = input.maxFixIterations ?? 8;
+  const autoMerge = input.autoMerge ?? true;
   const info = workflowInfo();
 
   // 1. Push the initial branch (fresh PR) and create the PR.
@@ -148,14 +152,18 @@ export async function robustPRMergeWorkflow(
       continue; // re-run CI after conflict resolution
     }
 
-    // 4. All clear — merge.
+    // 4. All clear — merge (unless autoMerge is disabled).
+    if (!autoMerge) {
+      log.info('autoMerge=false; skipping merge', { pr: pr.url, workflowId: info.workflowId });
+      return { prNumber: pr.number, prUrl: pr.url, iterations: iter, merged: false };
+    }
     await cheap.mergePRActivity({
       repoFullName: input.repoFullName,
       prNumber: pr.number,
       mergeMethod: 'squash',
       deleteBranch: true,
     });
-    return { prNumber: pr.number, prUrl: pr.url, iterations: iter };
+    return { prNumber: pr.number, prUrl: pr.url, iterations: iter, merged: true };
   }
 
   throw ApplicationFailure.create({

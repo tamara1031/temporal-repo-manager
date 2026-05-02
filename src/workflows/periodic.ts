@@ -12,11 +12,14 @@ export interface PeriodicRefactorInput {
   repoFullName: string;
   baseBranch?: string;
   refactorBrief?: string;
+  /** When false, the child PR-lifecycle stops before merging. Defaults to true. */
+  autoMerge?: boolean;
 }
 
 export interface PeriodicRefactorOutput {
   prUrl?: string;
   prNumber?: number;
+  merged?: boolean;
   skipped?: 'no-changes';
 }
 
@@ -77,6 +80,7 @@ export async function periodicRefactorWorkflow(
             '\n```\n\n' +
             '### Changed files\n' +
             result.changedFiles.map((f: string) => ` - ${f}`).join('\n'),
+          autoMerge: input.autoMerge,
         },
       ],
       workflowId: `pr-lifecycle-${branch}`,
@@ -84,7 +88,7 @@ export async function periodicRefactorWorkflow(
       cancellationType: ChildWorkflowCancellationType.WAIT_CANCELLATION_COMPLETED,
     });
 
-    return { prUrl: prResult.prUrl, prNumber: prResult.prNumber };
+    return { prUrl: prResult.prUrl, prNumber: prResult.prNumber, merged: prResult.merged };
   } finally {
     await cheap.cleanupWorkspaceActivity({ workdir: clone.workdir }).catch(() => undefined);
   }

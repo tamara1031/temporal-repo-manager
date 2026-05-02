@@ -53,7 +53,11 @@ ENV NODE_ENV=production \
     TEMPORAL_TASK_QUEUE=repo-steward \
     HOME=/home/agent
 
-RUN useradd -m -u 1001 -d /home/agent agent \
+# Match the host UID (1000) so bind-mounted files like ~/.codex/auth.json
+# (mode 600, owned by the host user) remain readable inside the container.
+# The base node image ships a `node` user at UID 1000, which we replace.
+RUN userdel -r node 2>/dev/null || true \
+ && useradd -m -u 1000 -d /home/agent agent \
  && mkdir -p /home/agent/.codex /workspaces \
  && chown -R agent:agent /home/agent /workspaces
 
