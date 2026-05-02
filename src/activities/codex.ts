@@ -1,4 +1,7 @@
 import { ApplicationFailure } from '@temporalio/activity';
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
 import { execCommand } from './_exec';
 
 export interface CodexInput {
@@ -25,6 +28,27 @@ export interface CodexOutput {
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 
+/**
+ * Path to the auth file produced by `codex login` (browser-based ChatGPT login).
+ * Override with `CODEX_HOME` to point at a different directory.
+ */
+function codexAuthPath(): string {
+  const home = process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex');
+  return path.join(home, 'auth.json');
+}
+
+async function ensureCodexAuth(): Promise<void> {
+  const p = codexAuthPath();
+  try {
+    await fs.access(p);
+  } catch {
+    throw ApplicationFailure.nonRetryable(
+      `codex auth not found at ${p}; run \`codex login\` locally and mount the resulting auth.json`,
+      'MissingCredentials',
+    );
+  }
+}
+
 async function changedFilesIn(workdir: string): Promise<string[]> {
   const res = await execCommand('git', ['status', '--porcelain'], { cwd: workdir });
   if (res.code !== 0) return [];
@@ -42,9 +66,13 @@ async function changedFilesIn(workdir: string): Promise<string[]> {
  * - If the prompt asks codex to edit, modifications land in the working tree
  *   and `changedFiles` lists them. Commit / push happens in the workflow.
  *
- * Adjust the `args` array if your installed codex version uses different flags.
+ * Authentication: codex finds its credentials at `~/.codex/auth.json` (or
+ * `$CODEX_HOME/auth.json`). On a Worker pod, mount the file produced by
+ * `codex login` as a Secret. No OPENAI_API_KEY is required.
  */
 export async function codexActivity(input: CodexInput): Promise<CodexOutput> {
+  await ensureCodexAuth();
+
   const args = ['exec'];
   if (input.model) args.push('--model', input.model);
 
@@ -60,7 +88,9 @@ export async function codexActivity(input: CodexInput): Promise<CodexOutput> {
     input: fullPrompt,
     timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     env: {
-      OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? '',
+      // Codex CLI honors HOME (and CODEX_HOME) to locate auth.json.
+      HOME: process.env.HOME ?? os.homedir(),
+      ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}),
       CODEX_NON_INTERACTIVE: '1',
     },
   });

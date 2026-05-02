@@ -54,7 +54,7 @@ ENV NODE_ENV=production \
     HOME=/home/agent
 
 RUN useradd -m -u 1001 -d /home/agent agent \
- && mkdir -p /workspaces \
+ && mkdir -p /home/agent/.codex /workspaces \
  && chown -R agent:agent /home/agent /workspaces
 
 COPY --from=build /app/node_modules ./node_modules

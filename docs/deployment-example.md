@@ -9,7 +9,8 @@
 - Worker はアウトバウンド通信のみ。Service / Ingress / HTTPRoute は不要です。
 - 必要な認証情報:
   - `GITHUB_TOKEN` … GitHub PAT（環境変数）
-  - `OPENAI_API_KEY` … codex CLI 用
+  - `~/.codex/auth.json` … codex CLI のブラウザログイン後に生成される認証ファイル
+    （ローカルで `codex login` を 1 度走らせて生成してから Secret 化）
 
 ## 環境変数
 
@@ -57,8 +58,6 @@ spec:
           envFrom:
             - configMapRef:
                 name: agent-platform-config
-            - secretRef:
-                name: codex-credentials   # OPENAI_API_KEY を含む
           env:
             - name: GITHUB_TOKEN
               valueFrom:
@@ -68,12 +67,22 @@ spec:
             - name: HOME
               value: /home/agent
           volumeMounts:
+            - name: codex-auth
+              mountPath: /home/agent/.codex
+              readOnly: true
             - name: workspaces
               mountPath: /workspaces
           resources:
             requests: { cpu: "500m", memory: "1Gi" }
             limits:   { cpu: "2",    memory: "4Gi" }
       volumes:
+        - name: codex-auth
+          secret:
+            secretName: codex-auth
+            items:
+              - key: auth.json
+                path: auth.json
+            defaultMode: 0400
         - name: workspaces
           emptyDir:
             sizeLimit: 10Gi
@@ -81,13 +90,18 @@ spec:
 
 ## サンプル: Secret 投入コマンド
 
+事前にローカルで `codex login`（ブラウザフロー）を実行し、`~/.codex/auth.json` を生成しておきます。
+
 ```bash
 kubectl -n agent-platform create secret generic github-token \
   --from-literal=token="$GITHUB_TOKEN"
 
-kubectl -n agent-platform create secret generic codex-credentials \
-  --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY"
+kubectl -n agent-platform create secret generic codex-auth \
+  --from-file=auth.json="$HOME/.codex/auth.json"
 ```
+
+> auth.json はリフレッシュトークンを含みます。ローテーションは
+> `codex login` をやり直して Secret を再投入する形になります。
 
 ## サンプル: NetworkPolicy（アウトバウンド限定）
 

@@ -55,15 +55,18 @@ temporal server start-dev
 # 2. 依存インストール
 npm install
 
-# 3. .env を整えて Worker を起動
+# 3. codex CLI にブラウザでログイン（~/.codex/auth.json が生成される）
+codex login
+
+# 4. .env を整えて Worker を起動
 cp .env.example .env
-$EDITOR .env       # GITHUB_TOKEN, OPENAI_API_KEY を入れる
+$EDITOR .env       # GITHUB_TOKEN を入れる
 npm run start.worker.dev
 
-# 4. Schedule をインストール
+# 5. Schedule をインストール
 npm run start.client -- --command=install-schedule --repo=<owner>/<repo>
 
-# 5. テスト (TestWorkflowEnvironment が裏でローカル Temporal を起動)
+# 6. テスト (TestWorkflowEnvironment が裏でローカル Temporal を起動)
 npm test
 ```
 
@@ -74,7 +77,10 @@ npm test
 | 認証 | 形式 | 用途 |
 | --- | --- | --- |
 | `GITHUB_TOKEN` | env var | `gh` / `git push` |
-| `OPENAI_API_KEY` | env var | codex CLI |
+| `~/.codex/auth.json` | JSON ファイル | codex CLI（`codex login` で生成） |
+
+`OPENAI_API_KEY` は使いません。codex CLI のブラウザログインで作られる `auth.json`
+を Worker にマウントする方式です（`CODEX_HOME` でディレクトリを上書き可）。
 
 実運用 (Kubernetes) では Secret として homelab 側で管理。サンプルマニフェストは
 [`docs/deployment-example.md`](./docs/deployment-example.md) を参照。
