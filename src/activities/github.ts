@@ -1,6 +1,5 @@
-import { ApplicationFailure } from '@temporalio/activity';
-import { execCommand, execOrThrow } from './_exec';
-import { ISSUE_LABEL_AI_READY, ISSUE_LABEL_STATUS_PREFIX, IssueStatus } from '../constants';
+import { ApplicationFailure, Context, log } from '@temporalio/activity';
+import { execOrThrow } from './_exec';
 
 function ghEnv(): NodeJS.ProcessEnv {
   const token = process.env.GITHUB_TOKEN;
@@ -11,117 +10,6 @@ function ghEnv(): NodeJS.ProcessEnv {
     );
   }
   return { GH_TOKEN: token, GITHUB_TOKEN: token };
-}
-
-export interface IssueSummary {
-  number: number;
-  title: string;
-  body: string;
-  url: string;
-  labels: string[];
-  repoFullName: string;
-}
-
-export interface ListIssuesInput {
-  repoFullName: string;
-  label?: string;
-  limit?: number;
-}
-
-export async function listAiReadyIssuesActivity(input: ListIssuesInput): Promise<IssueSummary[]> {
-  const label = input.label ?? ISSUE_LABEL_AI_READY;
-  const limit = input.limit ?? 20;
-  const res = await execOrThrow(
-    'gh',
-    [
-      'issue',
-      'list',
-      '--repo',
-      input.repoFullName,
-      '--label',
-      label,
-      '--state',
-      'open',
-      '--limit',
-      String(limit),
-      '--json',
-      'number,title,body,url,labels',
-    ],
-    { env: ghEnv() },
-  );
-  const raw = JSON.parse(res.stdout) as Array<{
-    number: number;
-    title: string;
-    body: string;
-    url: string;
-    labels: Array<{ name: string }>;
-  }>;
-  return raw
-    .filter((i) => !i.labels.some((l) => l.name.startsWith(ISSUE_LABEL_STATUS_PREFIX)))
-    .map((i) => ({
-      number: i.number,
-      title: i.title,
-      body: i.body ?? '',
-      url: i.url,
-      labels: i.labels.map((l) => l.name),
-      repoFullName: input.repoFullName,
-    }));
-}
-
-export interface UpdateIssueStatusInput {
-  repoFullName: string;
-  number: number;
-  status: IssueStatus;
-  note?: string;
-}
-
-export async function updateIssueStatusActivity(input: UpdateIssueStatusInput): Promise<void> {
-  const env = ghEnv();
-  // Remove any existing ai-status:* label so transitions are clean.
-  const existing = await execOrThrow(
-    'gh',
-    ['issue', 'view', String(input.number), '--repo', input.repoFullName, '--json', 'labels'],
-    { env },
-  );
-  const labels = (JSON.parse(existing.stdout).labels as Array<{ name: string }>).map((l) => l.name);
-  for (const l of labels) {
-    if (l.startsWith(ISSUE_LABEL_STATUS_PREFIX)) {
-      await execCommand(
-        'gh',
-        [
-          'issue',
-          'edit',
-          String(input.number),
-          '--repo',
-          input.repoFullName,
-          '--remove-label',
-          l,
-        ],
-        { env },
-      );
-    }
-  }
-  const newLabel = `${ISSUE_LABEL_STATUS_PREFIX}${input.status}`;
-  await execOrThrow(
-    'gh',
-    [
-      'issue',
-      'edit',
-      String(input.number),
-      '--repo',
-      input.repoFullName,
-      '--add-label',
-      newLabel,
-    ],
-    { env },
-  );
-  if (input.note) {
-    await execOrThrow(
-      'gh',
-      ['issue', 'comment', String(input.number), '--repo', input.repoFullName, '--body', input.note],
-      { env },
-    );
-  }
 }
 
 export interface CreatePRInput {
@@ -188,25 +76,54 @@ export interface CIResult {
   failedJobNames: string[];
 }
 
+interface RollupCheck {
+  name: string;
+  state?: string;       // CheckRun: COMPLETED|IN_PROGRESS|QUEUED|PENDING|REQUESTED. StatusContext: PENDING|SUCCESS|ERROR|FAILURE|EXPECTED.
+  conclusion?: string;  // CheckRun: SUCCESS|FAILURE|NEUTRAL|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STALE|SKIPPED|STARTUP_FAILURE.
+  workflowName?: string;
+  detailsUrl?: string;
+}
+
 interface PRChecksJSON {
-  statusCheckRollup: Array<{
-    name: string;
-    state: string;
-    conclusion?: string;
-    workflowName?: string;
-    detailsUrl?: string;
-  }>;
+  statusCheckRollup: RollupCheck[];
+}
+
+const TERMINAL_STATUS_STATES = new Set(['SUCCESS', 'FAILURE', 'ERROR']);
+const PASSING_OUTCOMES = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED', 'STALE']);
+
+interface CheckOutcome {
+  done: boolean;
+  passed: boolean;
+}
+
+function classifyCheck(c: RollupCheck): CheckOutcome {
+  // CheckRun objects expose `conclusion` once the run finishes.
+  if (c.conclusion) {
+    return { done: true, passed: PASSING_OUTCOMES.has(c.conclusion) };
+  }
+  // StatusContext objects only expose `state`. PENDING / EXPECTED means in flight.
+  if (c.state && TERMINAL_STATUS_STATES.has(c.state)) {
+    return { done: true, passed: c.state === 'SUCCESS' };
+  }
+  return { done: false, passed: false };
+}
+
+function extractRunId(detailsUrl?: string): string | undefined {
+  if (!detailsUrl) return undefined;
+  // Sample: https://github.com/owner/repo/actions/runs/1234567890/job/9876543210
+  const m = detailsUrl.match(/\/actions\/runs\/(\d+)/);
+  return m ? m[1] : undefined;
 }
 
 export async function waitForCIActivity(input: WaitForCIInput): Promise<CIResult> {
   const env = ghEnv();
   const interval = (input.pollIntervalSeconds ?? 30) * 1000;
   const deadline = Date.now() + (input.maxWaitSeconds ?? 60 * 60) * 1000;
-  const { Context } = await import('@temporalio/activity');
   const ctx = Context.current();
 
   while (Date.now() < deadline) {
     ctx.heartbeat({ phase: 'wait-ci', prNumber: input.prNumber });
+
     const view = await execOrThrow(
       'gh',
       [
@@ -222,45 +139,48 @@ export async function waitForCIActivity(input: WaitForCIInput): Promise<CIResult
     );
     const data = JSON.parse(view.stdout) as PRChecksJSON;
     const checks = data.statusCheckRollup ?? [];
+
     if (checks.length === 0) {
-      // No checks configured — treat as success.
+      log.info('No CI checks configured for PR — treating as success', { pr: input.prNumber });
       return { status: 'success', failedRunIds: [], failedJobNames: [] };
     }
-    const allDone = checks.every(
-      (c) => c.state === 'COMPLETED' || c.state === 'SUCCESS' || c.state === 'FAILURE' || c.conclusion,
-    );
+
+    const outcomes = checks.map((c) => ({ check: c, outcome: classifyCheck(c) }));
+    const allDone = outcomes.every((o) => o.outcome.done);
+
     if (allDone) {
-      const failed = checks.filter(
-        (c) =>
-          (c.conclusion ?? c.state) !== 'SUCCESS' &&
-          (c.conclusion ?? c.state) !== 'NEUTRAL' &&
-          (c.conclusion ?? c.state) !== 'SKIPPED',
-      );
+      const failed = outcomes.filter((o) => !o.outcome.passed).map((o) => o.check);
       if (failed.length === 0) {
         return { status: 'success', failedRunIds: [], failedJobNames: [] };
       }
+      const failedRunIds = Array.from(
+        new Set(failed.map((c) => extractRunId(c.detailsUrl)).filter(Boolean) as string[]),
+      );
       return {
         status: 'failure',
-        failedRunIds: failed
-          .map((c) => (c.detailsUrl ?? '').split('/').pop() ?? '')
-          .filter(Boolean),
+        failedRunIds,
         failedJobNames: failed.map((c) => c.name),
       };
     }
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(resolve, interval);
-      const cancel = () => {
-        clearTimeout(t);
-        reject(new Error('cancelled'));
-      };
-      try {
-        ctx.cancellationSignal.addEventListener('abort', cancel, { once: true });
-      } catch {
-        /* ignore */
-      }
-    });
+
+    await sleepCancellable(interval, ctx.cancellationSignal);
   }
   return { status: 'timeout', failedRunIds: [], failedJobNames: [] };
+}
+
+function sleepCancellable(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(new Error('cancelled'));
+    const t = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(t);
+      reject(new Error('cancelled'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 export interface FetchFailedLogsInput {

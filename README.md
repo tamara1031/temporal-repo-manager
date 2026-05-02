@@ -1,0 +1,95 @@
+# temporal-homelab / agent-platform
+
+Pull 型・Webhook 不要・Temporal 駆動の自律 AI エージェント基盤。
+定期的にリポジトリを巡回してリファクタ PR を出し、CI が落ちたら自己修復してマージまで完遂する。
+
+```
+Temporal Schedule ──▶ periodicRefactorWorkflow ──▶ robustPRMergeWorkflow (child) ──▶ merge
+```
+
+## できること
+
+- **定期リファクタ**: Schedule で起動 → codex がコードを解析・適用 → PR → 自動 CI 修復 → マージ。
+- **CI 自己修復ループ**: `gh run view --log-failed` を codex に渡して fix → push → 再度 CI 待機。
+- **コンフリクト解消ループ**: `git merge --no-commit` でトライアル → codex で解消 → push → CI へ戻る。
+
+> Issue 駆動ルートと Claude 連携はいったん外しています。
+> 復活させるときは `robustPRMergeWorkflow` を子として再利用すれば容易に追加可能。
+
+## ディレクトリ構成
+
+```
+.
+├── Dockerfile              # Node20 + gh + codex
+├── package.json            # @temporalio/* (~1.11)
+├── tsconfig.json
+├── .env.example            # Worker が読む環境変数のテンプレート
+├── .dockerignore
+├── scripts/
+│   └── schedule-setup.sh   # temporal schedule create --upsert
+├── src/
+│   ├── constants.ts
+│   ├── worker.ts           # Worker 起動エントリ
+│   ├── client.ts           # 開発用クライアント (install-schedule / run-once)
+│   ├── activities/
+│   │   ├── _exec.ts        # spawn ラッパー (heartbeat + cancellation)
+│   │   ├── git.ts          # clone / commit / push / conflict 検知
+│   │   ├── github.ts       # gh CLI: PR, CI poll, merge
+│   │   ├── codex.ts        # codex exec (analyze + apply 統合)
+│   │   └── index.ts
+│   └── workflows/
+│       ├── periodic.ts     # periodicRefactorWorkflow
+│       └── shared/
+│           └── pr_lifecycle.ts # robustPRMergeWorkflow
+└── docs/
+    ├── architecture.md
+    └── deployment-example.md
+```
+
+## クイックスタート (ローカル)
+
+```bash
+# 1. Temporal dev サーバを別ターミナルで起動
+temporal server start-dev
+
+# 2. 依存インストール
+npm install
+
+# 3. .env を整えて Worker を起動
+cp .env.example .env
+$EDITOR .env       # GITHUB_TOKEN, OPENAI_API_KEY を入れる
+npm run start.worker.dev
+
+# 4. Schedule をインストール
+npm run start.client -- --command=install-schedule --repo=<owner>/<repo>
+```
+
+詳細は [`docs/architecture.md`](./docs/architecture.md) と [`docs/deployment-example.md`](./docs/deployment-example.md)。
+
+## 認証情報
+
+| 認証 | 形式 | 用途 |
+| --- | --- | --- |
+| `GITHUB_TOKEN` | env var | `gh` / `git push` |
+| `OPENAI_API_KEY` | env var | codex CLI |
+
+実運用 (Kubernetes) では Secret として homelab 側で管理。サンプルマニフェストは
+[`docs/deployment-example.md`](./docs/deployment-example.md) を参照。
+
+## 主要な設計判断
+
+- **Pull 型**: 受信エンドポイント無し。すべて Temporal Schedule から起動する。Service / Ingress / HTTPRoute は不要。
+- **CI 待機は heartbeating activity**: 数分〜1 時間級の待ちを Workflow 内で `sleep` せず、Activity 側でポーリング + heartbeat。
+- **PR ライフサイクルは Child Workflow**: 上位 Workflow から再利用可能（後で Issue 駆動を足すときも同じ子を呼べばよい）。
+- **Activity リトライは段階別**: 軽量 (gh read 系) / 重量 (codex) / CI 待機 で別ポリシー。すべて `MissingCredentials` のみ非リトライ。
+- **Determinism**: Workflow から `Date.now()` / `Math.random()` / 直接 `process.env` を呼ばない。すべて Activity に閉じ込める。
+
+## 既知の制約
+
+- `workdir` がローカル FS にあるため、ある Refactor の処理は同一 Pod 内で完結する必要がある。
+  Worker をスケールするときは「同 Workflow は同 Pod に貼り付く」ことが保証される構成にするか、
+  `workdir` を共有ボリュームに置くか、子 Workflow で再 clone する設計に変更する。
+- `codex` CLI のフラグは公開ドキュメント時点のもの。バージョン差異がある場合は
+  `src/activities/codex.ts` を調整する。
+- 単体テストは未同梱。Replay テスト ([Temporal TS SDK の testing ガイド](https://docs.temporal.io/develop/typescript/testing-suite))
+  を CI に追加することを推奨。

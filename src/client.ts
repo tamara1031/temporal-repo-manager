@@ -1,11 +1,11 @@
 /**
- * Optional helper for ad-hoc workflow starts and schedule management
- * from a developer machine. Production schedule install lives in
- * k8s/schedule-setup.sh (which uses the temporal CLI directly).
+ * Helper for ad-hoc workflow starts and schedule management from a developer
+ * machine. Production schedule install lives in scripts/schedule-setup.sh
+ * (which uses the temporal CLI directly).
  */
 import { Client, Connection, ScheduleOverlapPolicy } from '@temporalio/client';
 import { TASK_QUEUE } from './constants';
-import { periodicRefactorWorkflow, issuePollerWorkflow } from './workflows';
+import { periodicRefactorWorkflow } from './workflows';
 
 interface CLIArgs {
   command: string;
@@ -23,7 +23,7 @@ function parseArgs(argv: string[]): CLIArgs {
   ) as Record<string, string>;
   if (!args.command || !args.repo) {
     throw new Error(
-      'usage: ts-node src/client.ts --command=<install-schedules|run-once> --repo=<owner/repo> ' +
+      'usage: ts-node src/client.ts --command=<install-schedule|run-once> --repo=<owner/repo> ' +
         '[--base-branch=main] [--cron="0 * * * *"]',
     );
   }
@@ -48,7 +48,7 @@ async function main(): Promise<void> {
   const taskQueue = process.env.TEMPORAL_TASK_QUEUE ?? TASK_QUEUE;
 
   switch (cli.command) {
-    case 'install-schedules': {
+    case 'install-schedule': {
       await client.schedule.create({
         scheduleId: `periodic-refactor-${cli.repo.replace('/', '__')}`,
         spec: { cronExpressions: [cli.cron] },
@@ -60,18 +60,7 @@ async function main(): Promise<void> {
         },
         policies: { overlap: ScheduleOverlapPolicy.SKIP },
       });
-      await client.schedule.create({
-        scheduleId: `issue-poller-${cli.repo.replace('/', '__')}`,
-        spec: { intervals: [{ every: '5m' }] },
-        action: {
-          type: 'startWorkflow',
-          workflowType: issuePollerWorkflow,
-          args: [{ repoFullName: cli.repo, baseBranch: cli.baseBranch, taskQueue }],
-          taskQueue,
-        },
-        policies: { overlap: ScheduleOverlapPolicy.SKIP },
-      });
-      console.log('Installed schedules for', cli.repo);
+      console.log('Installed schedule for', cli.repo);
       break;
     }
     case 'run-once': {

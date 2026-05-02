@@ -1,8 +1,8 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { Context, ApplicationFailure } from '@temporalio/activity';
-import { execOrThrow } from './_exec';
+import { ApplicationFailure, log } from '@temporalio/activity';
+import { execCommand, execOrThrow } from './_exec';
 
 export interface CloneInput {
   repoFullName: string;
@@ -117,19 +117,31 @@ export interface CheckConflictOutput {
   diffSummary?: string;
 }
 
+async function isMergeInProgress(workdir: string): Promise<boolean> {
+  try {
+    await fs.access(path.join(workdir, '.git', 'MERGE_HEAD'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function checkConflictActivity(
   input: CheckConflictInput,
 ): Promise<CheckConflictOutput> {
   const env = ghAuthEnv();
   await execOrThrow('git', ['fetch', 'origin', input.baseBranch], { cwd: input.workdir, env });
-  // Try a no-commit merge to detect conflicts.
-  const merge = await execOrThrow('git', ['merge', '--no-commit', '--no-ff', `origin/${input.baseBranch}`], {
-    cwd: input.workdir,
-    env,
-  }).catch((err) => {
-    Context.current().log.info('Merge attempt produced non-zero exit', { err: String(err) });
-    return null;
-  });
+
+  // Trial merge with --no-commit --no-ff. A non-zero exit only signals "conflicts
+  // present"; we still need to scan the index to enumerate them.
+  const trial = await execCommand(
+    'git',
+    ['merge', '--no-commit', '--no-ff', `origin/${input.baseBranch}`],
+    { cwd: input.workdir, env },
+  );
+  if (trial.code !== 0) {
+    log.info('Trial merge exited non-zero (likely conflicts)', { code: trial.code });
+  }
 
   const diff = await execOrThrow('git', ['diff', '--name-only', '--diff-filter=U'], {
     cwd: input.workdir,
@@ -145,15 +157,16 @@ export async function checkConflictActivity(
     diffSummary = summary.stdout.slice(0, 16 * 1024);
   }
 
-  // Always abort the trial merge — the workflow decides next steps.
-  await execOrThrow('git', ['merge', '--abort'], { cwd: input.workdir }).catch(() => undefined);
+  // Abort only when a merge is actually in progress; otherwise `merge --abort`
+  // would error spuriously.
+  if (await isMergeInProgress(input.workdir)) {
+    await execCommand('git', ['merge', '--abort'], { cwd: input.workdir });
+  }
 
   return {
     hasConflict: conflicted.length > 0,
     conflictedFiles: conflicted,
     diffSummary,
-    // Keep merge result reachable for debugging.
-    ...(merge ? {} : {}),
   };
 }
 

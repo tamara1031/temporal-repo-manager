@@ -45,8 +45,8 @@ export interface PeriodicRefactorOutput {
 
 /**
  * periodicRefactorWorkflow — runs on a Temporal Schedule.
- * Clones the repo, asks codex to map opportunities, asks claude to apply them,
- * and hands the resulting branch off to the common PR-lifecycle child workflow.
+ * Clones the repo, asks codex to identify and apply narrow refactors, then
+ * hands the resulting branch off to the common PR-lifecycle child workflow.
  */
 export async function periodicRefactorWorkflow(
   input: PeriodicRefactorInput,
@@ -62,25 +62,20 @@ export async function periodicRefactorWorkflow(
   });
 
   try {
-    const analysis = await heavy.codexAnalyzeActivity({
+    const result = await heavy.codexActivity({
       workdir: clone.workdir,
+      systemPrompt:
+        'You are a careful refactoring engineer. Apply only safe, narrow refactors. ' +
+        'Do not introduce new dependencies. Keep tests green. Stop after at most 3 ' +
+        'opportunities — quality over quantity.',
       prompt:
         'Survey this repository for safe, narrow refactors that improve clarity or remove ' +
-        'duplication WITHOUT changing observable behavior. Pick at most 3 opportunities and ' +
-        'output a concrete plan: file paths, exact edits, expected risk. ' +
+        'duplication WITHOUT changing observable behavior. Apply up to 3 of them directly to ' +
+        'the working tree, then stop. ' +
         (input.refactorBrief ?? ''),
     });
 
-    const claudeResult = await heavy.runClaudeActivity({
-      workdir: clone.workdir,
-      systemPrompt:
-        'You are a careful refactoring engineer. Apply the plan precisely. ' +
-        'Do not introduce new dependencies. Keep tests green.',
-      context: analysis.summary,
-      prompt: 'Apply the refactor plan to the working tree, then stop.',
-    });
-
-    if (claudeResult.changedFiles.length === 0) {
+    if (result.changedFiles.length === 0) {
       log.info('No changes after refactor pass; skipping PR');
       return { skipped: 'no-changes' };
     }
@@ -90,7 +85,7 @@ export async function periodicRefactorWorkflow(
       message: `refactor(auto): ${branch}`,
     });
 
-    const result = await executeChild(robustPRMergeWorkflow, {
+    const prResult = await executeChild(robustPRMergeWorkflow, {
       args: [
         {
           repoFullName: input.repoFullName,
@@ -100,12 +95,11 @@ export async function periodicRefactorWorkflow(
           prTitle: 'refactor(auto): periodic agent pass',
           prBody:
             'Automated refactor pass.\n\n' +
-            '### Codex analysis\n```\n' +
-            analysis.summary.slice(0, 4000) +
+            '### Codex summary\n```\n' +
+            result.message.slice(0, 4000) +
             '\n```\n\n' +
-            '### Claude summary\n```\n' +
-            claudeResult.message.slice(0, 4000) +
-            '\n```',
+            '### Changed files\n' +
+            result.changedFiles.map((f) => ` - ${f}`).join('\n'),
         },
       ],
       workflowId: `pr-lifecycle-${branch}`,
@@ -113,7 +107,7 @@ export async function periodicRefactorWorkflow(
       cancellationType: ChildWorkflowCancellationType.WAIT_CANCELLATION_COMPLETED,
     });
 
-    return { prUrl: result.prUrl, prNumber: result.prNumber };
+    return { prUrl: prResult.prUrl, prNumber: prResult.prNumber };
   } finally {
     await cheap.cleanupWorkspaceActivity({ workdir: clone.workdir }).catch(() => undefined);
   }

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.6
 #
 # Worker image for the autonomous AI agent platform.
-# Provides: Node 20, gh CLI, Anthropic Claude Code CLI, OpenAI Codex CLI, git.
+# Provides: Node 20, gh CLI, OpenAI Codex CLI, git.
 #
 FROM node:20-bookworm-slim AS base
 
@@ -28,10 +28,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
  && apt-get install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code and Codex CLIs globally.
-RUN npm install -g \
-      @anthropic-ai/claude-code \
-      @openai/codex \
+# Install Codex CLI globally.
+RUN npm install -g @openai/codex \
  && npm cache clean --force
 
 # ---- App build stage ----
@@ -56,7 +54,7 @@ ENV NODE_ENV=production \
     HOME=/home/agent
 
 RUN useradd -m -u 1001 -d /home/agent agent \
- && mkdir -p /home/agent/.claude /workspaces \
+ && mkdir -p /workspaces \
  && chown -R agent:agent /home/agent /workspaces
 
 COPY --from=build /app/node_modules ./node_modules

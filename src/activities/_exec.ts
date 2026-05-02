@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { Context } from '@temporalio/activity';
+import { Context, CancelledFailure } from '@temporalio/activity';
 
 export interface ExecOptions {
   cwd?: string;
@@ -7,6 +7,8 @@ export interface ExecOptions {
   input?: string;
   timeoutMs?: number;
   maxOutputBytes?: number;
+  /** Heartbeat interval; pass 0 to disable. */
+  heartbeatMs?: number;
 }
 
 export interface ExecResult {
@@ -30,14 +32,34 @@ export class CommandFailed extends Error {
 }
 
 const DEFAULT_MAX_OUTPUT = 4 * 1024 * 1024;
+const DEFAULT_HEARTBEAT_MS = 5_000;
+
+interface ActivityHooks {
+  heartbeat: (details: unknown) => void;
+  abortSignal: AbortSignal | undefined;
+}
+
+function getActivityHooks(): ActivityHooks {
+  try {
+    const ctx = Context.current();
+    return {
+      heartbeat: (d) => ctx.heartbeat(d),
+      abortSignal: ctx.cancellationSignal,
+    };
+  } catch {
+    // Not running inside a Temporal activity (e.g. unit tests, ad-hoc scripts).
+    return { heartbeat: () => undefined, abortSignal: undefined };
+  }
+}
 
 export async function execCommand(
   command: string,
   args: readonly string[],
   options: ExecOptions = {},
 ): Promise<ExecResult> {
-  const ctx = Context.current();
+  const hooks = getActivityHooks();
   const maxBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT;
+  const heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
   const env: NodeJS.ProcessEnv = { ...process.env, ...(options.env ?? {}) };
 
   return await new Promise<ExecResult>((resolve, reject) => {
@@ -51,49 +73,49 @@ export async function execCommand(
     const stderrBuf: Buffer[] = [];
     let stdoutBytes = 0;
     let stderrBytes = 0;
-    let killed = false;
+    let cancelled = false;
+    let timedOut = false;
 
-    const heartbeatInterval = setInterval(() => {
-      try {
-        ctx.heartbeat({ command, pid: child.pid });
-      } catch {
-        // Heartbeat unavailable in non-activity context; ignore.
-      }
-    }, 5000);
+    const heartbeatInterval =
+      heartbeatMs > 0
+        ? setInterval(() => hooks.heartbeat({ command, pid: child.pid }), heartbeatMs)
+        : undefined;
 
-    const cancelAbort = () => {
-      if (!killed && !child.killed) {
-        killed = true;
-        child.kill('SIGTERM');
-        setTimeout(() => {
-          if (!child.killed) child.kill('SIGKILL');
-        }, 5000).unref();
-      }
+    const killChild = (): void => {
+      if (child.killed) return;
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        if (!child.killed) child.kill('SIGKILL');
+      }, 5_000).unref();
     };
 
-    let cancelHandler: (() => void) | undefined;
-    try {
-      ctx.cancellationSignal.addEventListener('abort', cancelAbort, { once: true });
-      cancelHandler = cancelAbort;
-    } catch {
-      // Outside activity context — no cancellation hook.
+    const onCancel = (): void => {
+      cancelled = true;
+      killChild();
+    };
+
+    if (hooks.abortSignal) {
+      if (hooks.abortSignal.aborted) {
+        // Already cancelled before spawn settled — kill immediately.
+        onCancel();
+      } else {
+        hooks.abortSignal.addEventListener('abort', onCancel, { once: true });
+      }
     }
 
     let timer: NodeJS.Timeout | undefined;
     if (options.timeoutMs && options.timeoutMs > 0) {
       timer = setTimeout(() => {
-        cancelAbort();
-        reject(
-          new CommandFailed(command, args, {
-            code: -1,
-            stdout: Buffer.concat(stdoutBuf).toString('utf8'),
-            stderr:
-              Buffer.concat(stderrBuf).toString('utf8') +
-              `\n[exec] command timed out after ${options.timeoutMs}ms`,
-          }),
-        );
+        timedOut = true;
+        killChild();
       }, options.timeoutMs);
     }
+
+    const cleanup = (): void => {
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+      if (timer) clearTimeout(timer);
+      if (hooks.abortSignal) hooks.abortSignal.removeEventListener('abort', onCancel);
+    };
 
     child.stdout.on('data', (chunk: Buffer) => {
       stdoutBytes += chunk.length;
@@ -105,40 +127,31 @@ export async function execCommand(
     });
 
     child.once('error', (err) => {
-      clearInterval(heartbeatInterval);
-      if (timer) clearTimeout(timer);
-      if (cancelHandler) {
-        try {
-          ctx.cancellationSignal.removeEventListener('abort', cancelHandler);
-        } catch {
-          /* ignore */
-        }
-      }
+      cleanup();
       reject(err);
     });
 
     child.once('close', (code) => {
-      clearInterval(heartbeatInterval);
-      if (timer) clearTimeout(timer);
-      if (cancelHandler) {
-        try {
-          ctx.cancellationSignal.removeEventListener('abort', cancelHandler);
-        } catch {
-          /* ignore */
-        }
-      }
+      cleanup();
       const result: ExecResult = {
         code: code ?? -1,
         stdout: Buffer.concat(stdoutBuf).toString('utf8'),
         stderr: Buffer.concat(stderrBuf).toString('utf8'),
       };
+      if (cancelled) {
+        // Surface as Temporal CancelledFailure so the workflow side observes
+        // a clean cancellation rather than a generic command failure.
+        return reject(new CancelledFailure(`Command '${command}' cancelled`));
+      }
+      if (timedOut) {
+        result.stderr += `\n[exec] command timed out after ${options.timeoutMs}ms`;
+        result.code = result.code === 0 ? 124 : result.code;
+      }
       resolve(result);
     });
 
-    if (options.input) {
-      child.stdin.write(options.input);
-    }
-    child.stdin.end();
+    // Pipe optional stdin in a single call; `end()` flushes.
+    child.stdin.end(options.input ?? '');
   });
 }
 

@@ -9,8 +9,7 @@
 - Worker はアウトバウンド通信のみ。Service / Ingress / HTTPRoute は不要です。
 - 必要な認証情報:
   - `GITHUB_TOKEN` … GitHub PAT（環境変数）
-  - `~/.claude/credentials` … Claude Code CLI の認証ファイル
-  - `OPENAI_API_KEY` … codex CLI 用（任意）
+  - `OPENAI_API_KEY` … codex CLI 用
 
 ## 環境変数
 
@@ -69,22 +68,12 @@ spec:
             - name: HOME
               value: /home/agent
           volumeMounts:
-            - name: claude-creds
-              mountPath: /home/agent/.claude
-              readOnly: true
             - name: workspaces
               mountPath: /workspaces
           resources:
             requests: { cpu: "500m", memory: "1Gi" }
             limits:   { cpu: "2",    memory: "4Gi" }
       volumes:
-        - name: claude-creds
-          secret:
-            secretName: claude-credentials
-            items:
-              - key: credentials
-                path: credentials
-            defaultMode: 0400
         - name: workspaces
           emptyDir:
             sizeLimit: 10Gi
@@ -95,9 +84,6 @@ spec:
 ```bash
 kubectl -n agent-platform create secret generic github-token \
   --from-literal=token="$GITHUB_TOKEN"
-
-kubectl -n agent-platform create secret generic claude-credentials \
-  --from-file=credentials="$HOME/.claude/credentials"
 
 kubectl -n agent-platform create secret generic codex-credentials \
   --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY"
@@ -136,7 +122,7 @@ spec:
 
 `scripts/schedule-setup.sh` を Worker Pod もしくは管理者端末で実行してください。
 `temporal` CLI が解決できる Cluster へ向けて
-`periodicRefactorWorkflow` と `issuePollerWorkflow` の Schedule を upsert します。
+`periodicRefactorWorkflow` の Schedule を upsert します。
 
 ```bash
 TEMPORAL_ADDRESS=temporal-frontend.temporal.svc.cluster.local:7233 \

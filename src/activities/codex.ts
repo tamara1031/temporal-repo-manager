@@ -1,39 +1,63 @@
 import { ApplicationFailure } from '@temporalio/activity';
 import { execCommand } from './_exec';
 
-export interface CodexAnalyzeInput {
+export interface CodexInput {
   workdir: string;
   prompt: string;
+  /** Optional system-level instruction prepended to the prompt. */
+  systemPrompt?: string;
+  /** Optional supporting context (logs, diffs, prior analysis) prepended to the prompt. */
+  context?: string;
+  /** Files to focus on. Appended to the prompt as a hint; codex still has full repo access. */
   paths?: string[];
   model?: string;
   timeoutMs?: number;
 }
 
-export interface CodexAnalyzeOutput {
-  summary: string;
+export interface CodexOutput {
+  /** Trimmed stdout from codex (truncated to 16 KiB). */
+  message: string;
+  /** Full raw stdout. */
   raw: string;
+  /** Files codex modified, derived from `git status --porcelain`. */
+  changedFiles: string[];
 }
 
-const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 
-export async function codexAnalyzeActivity(
-  input: CodexAnalyzeInput,
-): Promise<CodexAnalyzeOutput> {
-  // `codex exec` is the non-interactive subcommand of @openai/codex.
-  // Adjust flags here if your codex version expects different syntax.
+async function changedFilesIn(workdir: string): Promise<string[]> {
+  const res = await execCommand('git', ['status', '--porcelain'], { cwd: workdir });
+  if (res.code !== 0) return [];
+  return res.stdout
+    .split('\n')
+    .map((l) => l.slice(3).trim())
+    .filter(Boolean);
+}
+
+/**
+ * Runs `codex exec` against the working tree at `workdir`.
+ *
+ * - If the prompt asks codex to inspect only, no files are modified and
+ *   `changedFiles` is empty — i.e. this doubles as an analysis activity.
+ * - If the prompt asks codex to edit, modifications land in the working tree
+ *   and `changedFiles` lists them. Commit / push happens in the workflow.
+ *
+ * Adjust the `args` array if your installed codex version uses different flags.
+ */
+export async function codexActivity(input: CodexInput): Promise<CodexOutput> {
   const args = ['exec'];
-  if (input.model) {
-    args.push('--model', input.model);
-  }
-  // Pass paths as part of the prompt body — codex exec reads stdin too.
-  let promptBody = input.prompt;
+  if (input.model) args.push('--model', input.model);
+
+  const parts = [input.systemPrompt?.trim(), input.context?.trim(), input.prompt.trim()]
+    .filter(Boolean) as string[];
   if (input.paths && input.paths.length > 0) {
-    promptBody += '\n\nFocus on these paths:\n' + input.paths.map((p) => ` - ${p}`).join('\n');
+    parts.push('Focus on these paths:\n' + input.paths.map((p) => ` - ${p}`).join('\n'));
   }
+  const fullPrompt = parts.join('\n\n');
 
   const res = await execCommand('codex', args, {
     cwd: input.workdir,
-    input: promptBody,
+    input: fullPrompt,
     timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     env: {
       OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? '',
@@ -42,8 +66,6 @@ export async function codexAnalyzeActivity(
   });
 
   if (res.code !== 0) {
-    // Treat as retryable application failure so Temporal's retry policy
-    // gets to back off and try again.
     throw ApplicationFailure.create({
       message: `codex exited ${res.code}: ${res.stderr.slice(0, 1024)}`,
       type: 'CodexInvocationError',
@@ -51,33 +73,10 @@ export async function codexAnalyzeActivity(
     });
   }
 
+  const changedFiles = await changedFilesIn(input.workdir);
   return {
-    summary: res.stdout.trim(),
+    message: res.stdout.trim().slice(0, 16 * 1024),
     raw: res.stdout,
+    changedFiles,
   };
-}
-
-export interface CodexConflictDigestInput {
-  workdir: string;
-  conflictedFiles: string[];
-  diffSummary: string;
-  timeoutMs?: number;
-}
-
-export async function codexConflictDigestActivity(
-  input: CodexConflictDigestInput,
-): Promise<CodexAnalyzeOutput> {
-  const prompt =
-    'Summarize the merge conflicts in this repository. For each conflicted file, describe the ' +
-    'two competing intents and propose a unified resolution that preserves both behaviors when ' +
-    'possible. Output a structured plan that another tool can execute.\n\nConflicted files:\n' +
-    input.conflictedFiles.map((f) => ` - ${f}`).join('\n') +
-    '\n\nDiff summary:\n' +
-    input.diffSummary;
-  return codexAnalyzeActivity({
-    workdir: input.workdir,
-    prompt,
-    paths: input.conflictedFiles,
-    timeoutMs: input.timeoutMs,
-  });
 }

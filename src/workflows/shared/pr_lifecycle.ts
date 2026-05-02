@@ -61,8 +61,8 @@ export interface RobustPRMergeOutput {
 /**
  * Common PR lifecycle:
  *   1. createPRActivity
- *   2. CI monitor loop — on failure: pull failed logs, codex re-context, claude fix, push, retry.
- *   3. Conflict resolution loop — on conflict: codex digest, claude resolve, push, return to CI loop.
+ *   2. CI monitor loop — on failure: pull failed logs, codex fix, push, retry.
+ *   3. Conflict resolution loop — on conflict: codex resolve, push, return to CI loop.
  *   4. mergePRActivity.
  */
 export async function robustPRMergeWorkflow(
@@ -119,22 +119,14 @@ export async function robustPRMergeWorkflow(
       }
       const failedLogs = logsParts.join('\n\n');
 
-      const errorContext = await heavy.codexAnalyzeActivity({
-        workdir: input.workdir,
-        prompt:
-          'CI failed with the logs below. Identify the failing test/build and the most ' +
-          'relevant source files & line ranges to inspect. Produce a focused fix plan.\n\n' +
-          'CI logs:\n' +
-          failedLogs.slice(0, 64 * 1024),
-      });
-
-      await heavy.runClaudeActivity({
+      const fix = await heavy.codexActivity({
         workdir: input.workdir,
         systemPrompt:
-          'You are an autonomous fix-it engineer. Apply MINIMAL changes to make CI pass. ' +
+          'You are an autonomous fix-it engineer. Identify the failing test/build from ' +
+          'the CI logs and apply MINIMAL changes to make CI pass. ' +
           'Do not add unrelated improvements.',
-        context: errorContext.summary,
-        prompt: 'Apply the fix plan above to the working tree, then stop.',
+        context: 'CI logs:\n' + failedLogs.slice(0, 64 * 1024),
+        prompt: 'Apply the minimal fix to the working tree, then stop.',
       });
 
       const commit = await heavy.commitAllActivity({
@@ -143,8 +135,9 @@ export async function robustPRMergeWorkflow(
       });
       if (!commit.committed) {
         throw ApplicationFailure.create({
-          message: 'Claude reported success but produced no diff; cannot self-heal',
+          message: 'Codex reported success but produced no diff; cannot self-heal',
           type: 'NoFixDiff',
+          details: [fix.message.slice(0, 4096)],
         });
       }
       await heavy.pushBranchActivity({
@@ -166,19 +159,15 @@ export async function robustPRMergeWorkflow(
         iter,
         files: conflict.conflictedFiles,
       });
-      const digest = await heavy.codexConflictDigestActivity({
-        workdir: input.workdir,
-        conflictedFiles: conflict.conflictedFiles,
-        diffSummary: conflict.diffSummary ?? '',
-      });
-      await heavy.runClaudeActivity({
+      const resolve = await heavy.codexActivity({
         workdir: input.workdir,
         systemPrompt:
           'You resolve git merge conflicts. Preserve intent from both sides whenever possible. ' +
           'Leave NO conflict markers in the resulting files.',
-        context: digest.summary,
+        context: 'Conflict diff:\n' + (conflict.diffSummary ?? ''),
+        paths: conflict.conflictedFiles,
         prompt:
-          'Resolve all merge conflicts in the working tree using the plan above. ' +
+          'Resolve all merge conflicts in the working tree. ' +
           `Conflicted files: ${conflict.conflictedFiles.join(', ')}.`,
       });
       const commit = await heavy.commitAllActivity({
@@ -189,6 +178,7 @@ export async function robustPRMergeWorkflow(
         throw ApplicationFailure.create({
           message: 'Conflict resolution produced no diff',
           type: 'NoFixDiff',
+          details: [resolve.message.slice(0, 4096)],
         });
       }
       await heavy.pushBranchActivity({
