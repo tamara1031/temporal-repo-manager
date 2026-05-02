@@ -1,0 +1,76 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "MemberOutput",
+    "description": "メンバーサブエージェント (Planner / Implementer / Reviewer / カスタムロール) の出力フォーマット。",
+    "type": "object",
+    "required": [
+        "agent_role",
+        "verdict",
+        "output"
+    ],
+    "properties": {
+        "agent_role": {
+            "type": "string",
+            "description": "自身のロール (Planner, Implementer, Reviewer, またはカスタムロール名)"
+        },
+        "verdict": {
+            "type": "string",
+            "enum": [
+                "DONE",
+                "APPROVE",
+                "REVISE"
+            ],
+            "description": "DONE: 成果物を提出 (Planner/Implementer/カスタム) 、APPROVE: レビュー合格 (Reviewer) 、REVISE: 修正要求 (Reviewer) 。"
+        },
+        "output": {
+            "type": "string",
+            "description": "役割に応じた出力内容 (計画・成果物・レビュー結果など)"
+        },
+        "checklist_coverage": {
+            "type": [
+                "object",
+                "null"
+            ],
+            "description": "チェックリスト各項目への対応状況 (Implementer / Reviewer 時) 。",
+            "additionalProperties": {
+                "type": "object",
+                "required": [
+                    "result",
+                    "detail"
+                ],
+                "properties": {
+                    "result": {
+                        "type": "string",
+                        "enum": [
+                            "PASS",
+                            "FAIL",
+                            "COVERED"
+                        ],
+                        "description": "PASS/FAIL: Reviewer が検証済みの最新判定。COVERED: Implementer が対応済み。上位の Manager は Reviewer の最新を待つか適宜ステータス、Manager は COVERED を REVISE に戻し、Reviewer が PASS/FAIL に変更する。"
+                    },
+                    "is_critical": {
+                        "type": "boolean",
+                        "description": "チェックリスト項目に [critical] タグが付いているか。true の場合、FAIL は必ず REVISE を引き起こす。false/省略の場合、FAIL は risks に記録されるが APPROVE を妨げない。"
+                    },
+                    "detail": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "rejection_instructions": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "REVISE 時の修正指示 (Reviewer が Implementer へ渡す具体的な指示) 。APPROVE / DONE 時は null。"
+        },
+        "risks": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "注意点や残存リスク"
+        }
+    }
+}

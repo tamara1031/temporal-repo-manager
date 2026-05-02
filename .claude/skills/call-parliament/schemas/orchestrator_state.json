@@ -1,0 +1,139 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "ParliamentOrchestratorState",
+    "description": "議会モデル オーケストレーターの状態管理スキーマ。全フェーズで使用する。姉妹スキーマ: hierarchy/orchestrator_state.json (status enum 等の共通定義あり、変更時は双方を更新)。",
+    "type": "object",
+    "required": [
+        "current_phase",
+        "parameters",
+        "topics",
+        "grand_synthesis"
+    ],
+    "properties": {
+        "current_phase": {
+            "type": "string",
+            "enum": [
+                "Phase 1",
+                "Phase 2",
+                "Phase 3",
+                "Phase 4"
+            ],
+            "description": "現在のフェーズ"
+        },
+        "parameters": {
+            "type": "object",
+            "description": "実行パラメータ (ユーザー指定またはデフォルト値)",
+            "required": [
+                "parallelism",
+                "max_rejections",
+                "summary_interval",
+                "member_count",
+                "max_rounds",
+                "convergence_threshold"
+            ],
+            "properties": {
+                "parallelism": {
+                    "type": "integer",
+                    "default": 3,
+                    "minimum": 1,
+                    "description": "議題を同時に並列実行する最大数"
+                },
+                "max_rejections": {
+                    "type": "integer",
+                    "default": 3,
+                    "minimum": 1,
+                    "description": "1議題あたりの差し戻し上限回数"
+                },
+                "summary_interval": {
+                    "type": "integer",
+                    "default": 4,
+                    "minimum": 1,
+                    "description": "議長が要約を挟む発言数間隔"
+                },
+                "member_count": {
+                    "type": "integer",
+                    "default": 4,
+                    "minimum": 4,
+                    "description": "議論に参加するメンバー数 (最低4)"
+                },
+                "max_rounds": {
+                    "type": "integer",
+                    "default": 5,
+                    "minimum": 1,
+                    "description": "議論ラウンドの上限"
+                },
+                "convergence_threshold": {
+                    "type": "integer",
+                    "default": 2,
+                    "minimum": 1,
+                    "description": "新規論点が出ないラウンド数で早期終了と判定する閾値"
+                }
+            }
+        },
+        "topics": {
+            "type": "array",
+            "description": "議題一覧",
+            "items": {
+                "type": "object",
+                "required": [
+                    "topic_id",
+                    "title",
+                    "checklist",
+                    "status",
+                    "rejection_count",
+                    "feedback_to_chair"
+                ],
+                "properties": {
+                    "topic_id": {
+                        "type": "string",
+                        "pattern": "^T[0-9]{3}$",
+                        "description": "議題ID (例: T001)"
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "議題のタイトル"
+                    },
+                    "checklist": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "minItems": 1,
+                        "description": "承認条件となるチェックリスト。客観的に検証可能な条件で記述すること。"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "TODO",
+                            "IN_PROGRESS",
+                            "IN_REVIEW",
+                            "APPROVED",
+                            "REJECTED",
+                            "ERROR"
+                        ],
+                        "description": "議題のステータス"
+                    },
+                    "rejection_count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "差し戻し回数 (上限は parameters.max_rejections に従う)"
+                    },
+                    "feedback_to_chair": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "差し戻し時の具体的な理由と改善指示 (APPROVEDの場合はnull)"
+                    }
+                }
+            }
+        },
+        "grand_synthesis": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Phase 4 の場合のみ最終結論を記述 (それ以外はnull)"
+        }
+    }
+}

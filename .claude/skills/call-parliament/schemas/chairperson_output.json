@@ -1,0 +1,269 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "ChairpersonOutput",
+    "description": "議長サブエージェントの応答フォーマット。action に応じて必要なフィールドが変わる。",
+    "type": "object",
+    "required": [
+        "action",
+        "target_topic",
+        "topic_id",
+        "current_round"
+    ],
+    "properties": {
+        "action": {
+            "type": "string",
+            "enum": [
+                "INSTANTIATE_MEMBERS",
+                "SUMMARIZE_AND_PROMPT",
+                "SUBMIT_TO_ORCHESTRATOR"
+            ],
+            "description": "議長の現在のアクション"
+        },
+        "target_topic": {
+            "type": "string",
+            "description": "対象議題のタイトル"
+        },
+        "topic_id": {
+            "type": "string",
+            "pattern": "^T[0-9]{3}$",
+            "description": "対象議題の ID"
+        },
+        "current_round": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "現在のラウンド番号 (上限は parameters.max_rounds に従う)"
+        },
+        "status": {
+            "type": "string",
+            "enum": [
+                "CONVERGED",
+                "MAX_ROUNDS",
+                "AGREED"
+            ],
+            "description": "SUBMIT_TO_ORCHESTRATOR 時の終了種別。AGREED: 合意達成 (終了条件1)。CONVERGED: 収束検出 (終了条件2)。MAX_ROUNDS: 上限到達 (終了条件3)。"
+        },
+        "generated_personas": {
+            "type": "object",
+            "description": "INSTANTIATE_MEMBERS 時のみ。生成したペルソナ一覧。",
+            "properties": {
+                "Advocate": {
+                    "$ref": "#/$defs/persona"
+                },
+                "Reviewer": {
+                    "$ref": "#/$defs/persona"
+                },
+                "Compliance": {
+                    "$ref": "#/$defs/persona"
+                },
+                "Pragmatist": {
+                    "$ref": "#/$defs/persona"
+                }
+            },
+            "required": [
+                "Advocate",
+                "Reviewer",
+                "Compliance",
+                "Pragmatist"
+            ],
+            "additionalProperties": {
+                "$ref": "#/$defs/additional_persona"
+            }
+        },
+        "discussion_log": {
+            "type": "array",
+            "description": "議論ログ。",
+            "items": {
+                "type": "object",
+                "required": [
+                    "round",
+                    "speaker",
+                    "stance",
+                    "statement"
+                ],
+                "properties": {
+                    "round": {
+                        "type": "integer"
+                    },
+                    "speaker": {
+                        "type": "string"
+                    },
+                    "stance": {
+                        "type": "string",
+                        "enum": [
+                            "PROPOSE",
+                            "CRITIQUE",
+                            "APPROVE",
+                            "REVISE"
+                        ],
+                        "description": "スタンス定義は templates/stance_definitions.md を参照"
+                    },
+                    "statement": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "summary": {
+            "type": "object",
+            "description": "SUMMARIZE_AND_PROMPT 時の要約",
+            "required": [
+                "agreements",
+                "conflicts",
+                "next_issue"
+            ],
+            "properties": {
+                "agreements": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "ここまでの合意点"
+                },
+                "conflicts": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "現在の対立点"
+                },
+                "next_issue": {
+                    "type": "string",
+                    "description": "次に解決すべき論点"
+                }
+            }
+        },
+        "final_deliverable": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "SUBMIT_TO_ORCHESTRATOR 時のみ。最終成果物の内容 (インライン)。deliverable_path が 非 null の場合はそちらがフルテキストの正とし、本フィールドは要約として並存可能。deliverable_path が null の場合は本フィールドが唯一の成果物。"
+        },
+        "checklist_validation": {
+            "type": [
+                "object",
+                "null"
+            ],
+            "description": "SUBMIT_TO_ORCHESTRATOR 時のみ。チェックリスト各項目の達成証明。",
+            "additionalProperties": {
+                "type": "object",
+                "required": [
+                    "result",
+                    "detail"
+                ],
+                "properties": {
+                    "result": {
+                        "type": "string",
+                        "enum": [
+                            "PASS",
+                            "FAIL"
+                        ]
+                    },
+                    "detail": {
+                        "type": "string"
+                    },
+                    "is_critical": {
+                        "type": "boolean",
+                        "description": "チェックリスト項目に [critical] タグが付いていた場合 true。true かつ FAIL の場合はオーケストレーターが REJECTED 扱いとする。false または省略 かつ FAIL の場合は residual_risks として受理する。省略時は false 扱い（後方互換）。"
+                    }
+                }
+            }
+        },
+        "unresolved_issues": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "issue",
+                    "positions"
+                ],
+                "properties": {
+                    "issue": {
+                        "type": "string",
+                        "description": "未解決の論点"
+                    },
+                    "positions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": [
+                                "role",
+                                "stance",
+                                "argument"
+                            ],
+                            "properties": {
+                                "role": {
+                                    "type": "string"
+                                },
+                                "stance": {
+                                    "type": "string"
+                                },
+                                "argument": {
+                                    "type": "string",
+                                    "description": "論拠の要約"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "各立場の論拠"
+            },
+            "description": "SUBMIT_TO_ORCHESTRATOR 時のみ。メンバー間で合意が不成立の論点 (対立するポジションが存在)。residual_risks との使い分け：対立がある場合は unresolved_issues、全員合意済みだが残るリスクは residual_risks。同一事象を両方に入れない。"
+        },
+        "deliverable_path": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "SUBMIT_TO_ORCHESTRATOR 時のみ。成果物をファイルに書き出した場合のパス。非 null の場合はこちらがフルテキストの正として扱われ、final_deliverable は要約として並存可能。"
+        },
+        "residual_risks": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "全員が合意済みだが解決されていない技術的・運用的リスク。unresolved_issues (対立がある論点) とは区別する。"
+        }
+    },
+    "$defs": {
+        "persona": {
+            "type": "object",
+            "required": [
+                "specialty",
+                "background"
+            ],
+            "properties": {
+                "specialty": {
+                    "type": "string",
+                    "description": "専門分野"
+                },
+                "background": {
+                    "type": "string",
+                    "description": "背景設定"
+                }
+            }
+        },
+        "additional_persona": {
+            "type": "object",
+            "required": [
+                "specialty",
+                "background",
+                "reason"
+            ],
+            "properties": {
+                "specialty": {
+                    "type": "string",
+                    "description": "専門分野"
+                },
+                "background": {
+                    "type": "string",
+                    "description": "背景設定"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "このロールを追加した理由"
+                }
+            }
+        }
+    }
+}

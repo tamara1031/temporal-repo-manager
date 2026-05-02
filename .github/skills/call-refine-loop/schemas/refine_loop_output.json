@@ -1,0 +1,63 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "RefineLoopOutput",
+    "description": "refine-loop エージェントの完了レポートフォーマット仕様。本スキーマは status の閉じた値セットをシングルソース・オブ・トゥルースとして文書化する（ADR-017）。",
+    "type": "object",
+    "required": [
+        "status",
+        "iteration_count",
+        "max_iterations"
+    ],
+    "properties": {
+        "status": {
+            "type": "string",
+            "enum": [
+                "CONVERGED",
+                "MAX_ITER",
+                "ESCALATE",
+                "ABORT"
+            ],
+            "description": "ループ終了種別。CONVERGED: [critical] 要件が2連続で全達成。MAX_ITER: max_iterations 到達後も品質未収束。ESCALATE: 同一 Fix Rule が3回以上出現（設計上の根本問題）。ABORT: [critical] タグなし、または agent ツール不可によるdispatch失敗。"
+        },
+        "iteration_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "実行したイテレーション数"
+        },
+        "max_iterations": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "呼び出し元が指定した最大イテレーション数"
+        },
+        "final_accuracy": {
+            "type": [
+                "number",
+                "null"
+            ],
+            "minimum": 0,
+            "maximum": 100,
+            "description": "最終イテレーションの Accuracy (%)。ABORT 時は null。"
+        },
+        "residual_issues": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "MAX_ITER / ESCALATE 時の残存 issues 一覧"
+        },
+        "fix_rule_ledger": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "本ループ内で発見した Fix Rule パターン一覧"
+        },
+        "abort_reason": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "status が ABORT の場合のみ。ABORT 理由（[critical] タグなし / dispatch 不可）。"
+        }
+    }
+}

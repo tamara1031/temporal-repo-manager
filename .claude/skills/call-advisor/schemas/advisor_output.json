@@ -1,0 +1,44 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "AdvisorOutput",
+    "description": "アドバイザーエージェントの XML 応答フォーマット仕様。実際の出力は XML テキストだが、本スキーマは verdict の閉じた値セットをシングルソース・オブ・トゥルースとして文書化する（ADR-017）。",
+    "type": "object",
+    "required": [
+        "analysis",
+        "recommended_approach",
+        "risks",
+        "verdict"
+    ],
+    "properties": {
+        "analysis": {
+            "type": "string",
+            "description": "現状分析と 3-axis 分析の結果（<analysis> タグ内容）"
+        },
+        "recommended_approach": {
+            "type": "string",
+            "description": "推奨アプローチ / 修正案 / 方針案（<recommended_approach> タグ内容）"
+        },
+        "risks": {
+            "type": "string",
+            "description": "懸念点や残存リスク（<risks> タグ内容）"
+        },
+        "verdict": {
+            "type": "string",
+            "enum": [
+                "PROCEED",
+                "CORRECT",
+                "ESCALATE",
+                "STOP"
+            ],
+            "description": "判定結果（<verdict> タグ内容）。PROCEED: 承認、CORRECT: 修正指示、ESCALATE: 下位スキルへ委譲、STOP: ユーザー判断が必要。"
+        },
+        "escalation_target": {
+            "type": "string",
+            "enum": [
+                "hierarchy",
+                "parliament"
+            ],
+            "description": "verdict が ESCALATE の場合のみ。委譲先サブエージェント。"
+        }
+    }
+}

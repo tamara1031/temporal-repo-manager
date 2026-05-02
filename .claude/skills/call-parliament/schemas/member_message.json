@@ -1,0 +1,44 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "MemberMessage",
+    "description": "メンバーサブエージェントの発言フォーマット。必ずこのJSON形式で出力すること。",
+    "type": "object",
+    "required": [
+        "agent_role",
+        "stance",
+        "target_agent",
+        "statement",
+        "condition_for_approval"
+    ],
+    "properties": {
+        "agent_role": {
+            "type": "string",
+            "description": "自身の役割（例：Advocate, Reviewer, Compliance, Pragmatist, またはカスタムロール名）"
+        },
+        "stance": {
+            "type": "string",
+            "enum": [
+                "PROPOSE",
+                "CRITIQUE",
+                "APPROVE",
+                "REVISE"
+            ],
+            "description": "スタンス定義は templates/stance_definitions.md を参照"
+        },
+        "target_agent": {
+            "type": "string",
+            "description": "誰の発言に対する意見か（または「議長」宛か）"
+        },
+        "statement": {
+            "type": "string",
+            "description": "専門的見地からの意見や指摘"
+        },
+        "condition_for_approval": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "承認するための条件。APPROVE時はnull、CRITIQUE時は必須。"
+        }
+    }
+}

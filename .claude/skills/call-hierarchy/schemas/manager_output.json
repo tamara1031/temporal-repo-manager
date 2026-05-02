@@ -1,0 +1,169 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "ManagerOutput",
+    "description": "Manager サブエージェントがオーケストレーターへ返す成果物フォーマット。",
+    "type": "object",
+    "required": [
+        "task_id",
+        "status",
+        "phase",
+        "checklist_validation"
+    ],
+    "properties": {
+        "task_id": {
+            "type": "string",
+            "pattern": "^T[0-9]{3}$",
+            "description": "対象タスクID (例: T001)"
+        },
+        "status": {
+            "type": "string",
+            "enum": [
+                "IN_REVIEW",
+                "ERROR"
+            ],
+            "description": "IN_REVIEW: 成果物をオーケストレーターへ提出。ERROR: 内部ループ上限超過など、マネージャーが自力で回復不能な失敗が発生した場合。"
+        },
+        "phase": {
+            "type": "string",
+            "enum": [
+                "PLANNING",
+                "IMPLEMENTING",
+                "REVIEWING",
+                "COMPLETED"
+            ],
+            "description": "現在の内部フェーズ。PLANNING はペルソナ生成 (Step 1) と計画立案 (Step 2) を包含する。"
+        },
+        "generated_personas": {
+            "description": "生成したメンバーペルソナ一覧。",
+            "type": "object",
+            "required": [
+                "Planner",
+                "Implementer",
+                "Reviewer"
+            ],
+            "properties": {
+                "Planner": {
+                    "$ref": "#/$defs/persona"
+                },
+                "Implementer": {
+                    "$ref": "#/$defs/persona"
+                },
+                "Reviewer": {
+                    "$ref": "#/$defs/persona"
+                }
+            },
+            "additionalProperties": {
+                "$ref": "#/$defs/additional_persona"
+            }
+        },
+        "plan_summary": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Planner が作成した作業計画の要約"
+        },
+        "plan_path": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "詳細な計画ファイルのパスまたは概要"
+        },
+        "deliverable_path": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "成果物のファイルパスまたは概要"
+        },
+        "checklist_validation": {
+            "type": "array",
+            "description": "各承認条件をどのように満たしたかの説明 (Reviewer の検証結果)",
+            "items": {
+                "type": "object",
+                "required": [
+                    "result",
+                    "detail"
+                ],
+                "properties": {
+                    "result": {
+                        "type": "string",
+                        "enum": [
+                            "PASS",
+                            "FAIL"
+                        ]
+                    },
+                    "is_critical": {
+                        "type": "boolean",
+                        "description": "チェックリスト項目に [critical] タグが付いていたか。FAIL かつ true の場合はオーケストレーターが REJECTED 扱いとする。FAIL かつ false/省略の場合は residual_risks へ記録してもよい。"
+                    },
+                    "detail": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_loop_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5,
+            "description": "Reviewer が REVISE を返して Implementer を再実行した回数 (前回の Implementer+Reviewer パスは含まない)。Planner 再起動時にリセットする。"
+        },
+        "residual_risks": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "残存リスクや注意点"
+        },
+        "error_reason": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "status が ERROR の場合のみ。失敗の原因と経緯の要約。オーケストレーターのフォールバック判断に使用する。"
+        }
+    },
+    "$defs": {
+        "persona": {
+            "type": "object",
+            "required": [
+                "specialty",
+                "background"
+            ],
+            "properties": {
+                "specialty": {
+                    "type": "string",
+                    "description": "専門分野"
+                },
+                "background": {
+                    "type": "string",
+                    "description": "背景設定"
+                }
+            }
+        },
+        "additional_persona": {
+            "type": "object",
+            "required": [
+                "specialty",
+                "background",
+                "reason"
+            ],
+            "properties": {
+                "specialty": {
+                    "type": "string",
+                    "description": "専門分野 (例: OAuth 2.0 / JWT 専門家、パフォーマンスチューニング専門家)"
+                },
+                "background": {
+                    "type": "string",
+                    "description": "背景設定"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "このロールを追加した理由"
+                }
+            }
+        }
+    }
+}

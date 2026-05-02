@@ -1,0 +1,17 @@
+name: easy-agent
+version: 0.1.0
+description: APM project for easy-agent
+author: tamara1031
+target:
+- claude
+- copilot
+dependencies:
+  apm:
+  - tamara1031/easy-agents/easy-agent
+  mcp: []
+scripts:
+  install: apm install --no-policy
+  compile: apm compile
+devDependencies:
+  apm:
+  - mizchi/skills/empirical-prompt-tuning

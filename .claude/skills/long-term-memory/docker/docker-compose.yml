@@ -1,0 +1,18 @@
+services:
+  chromadb:
+    image: chromadb/chroma:0.6.3
+    container_name: copilot-memory-chromadb
+    ports:
+      - "18000:8000"
+    volumes:
+      - ${HOME}/.local/share/copilot-memory/chroma-data:/chroma/chroma
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat')" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped

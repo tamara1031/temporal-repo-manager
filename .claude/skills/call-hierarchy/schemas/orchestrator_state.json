@@ -1,0 +1,141 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "HierarchyOrchestratorState",
+    "description": "階層型実行オーケストレーターの状態管理スキーマ。全フェーズで使用する。姉妹スキーマ: parliament/orchestrator_state.json (status enum 等の共通定義あり、変更時は双方を更新)。",
+    "type": "object",
+    "required": [
+        "current_phase",
+        "parameters",
+        "tasks",
+        "grand_summary"
+    ],
+    "properties": {
+        "current_phase": {
+            "type": "string",
+            "enum": [
+                "Phase 1",
+                "Phase 2",
+                "Phase 3",
+                "Phase 4"
+            ],
+            "description": "現在のフェーズ"
+        },
+        "parameters": {
+            "type": "object",
+            "description": "実行パラメータ (ユーザー指定またはデフォルト値)",
+            "required": [
+                "parallelism",
+                "max_rejections",
+                "member_count",
+                "checklist_path"
+            ],
+            "properties": {
+                "parallelism": {
+                    "type": "integer",
+                    "default": 5,
+                    "minimum": 1,
+                    "description": "タスクを同時に並列実行する最大数"
+                },
+                "max_rejections": {
+                    "type": "integer",
+                    "default": 3,
+                    "minimum": 1,
+                    "description": "1タスクあたりの差し戻し上限回数"
+                },
+                "member_count": {
+                    "type": "integer",
+                    "default": 3,
+                    "minimum": 3,
+                    "maximum": 5,
+                    "description": "各タスクに割り当てるメンバー数 (最低3: Planner/Implementer/Reviewer)"
+                },
+                "checklist_path": {
+                    "type": "string",
+                    "default": "docs/hierarchy-checklist.md",
+                    "description": "タスク一覧とチェックリストを記録するファイルパス"
+                }
+            }
+        },
+        "tasks": {
+            "type": "array",
+            "description": "タスク一覧",
+            "items": {
+                "type": "object",
+                "required": [
+                    "task_id",
+                    "description",
+                    "checklist",
+                    "status",
+                    "rejection_count",
+                    "depends_on"
+                ],
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "pattern": "^T[0-9]{3}$",
+                        "description": "タスクID (例: T001)"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "タスクの説明"
+                    },
+                    "checklist": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "minItems": 1,
+                        "description": "承認条件となるチェックリスト。客観的に検証可能な条件で記述すること。"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "TODO",
+                            "IN_PROGRESS",
+                            "IN_REVIEW",
+                            "APPROVED",
+                            "REJECTED",
+                            "SKIPPED",
+                            "ERROR"
+                        ],
+                        "description": "タスクのステータス。SKIPPED: depends_on の依存タスクが APPROVED に到達したが、このタスクを実行する必要がなくなった場合 (オーケストレーターの裁量で設定)"
+                    },
+                    "rejection_count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "差し戻し回数 (上限は parameters.max_rejections に従う)"
+                    },
+                    "depends_on": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "pattern": "^T[0-9]{3}$"
+                        },
+                        "description": "このタスクが開始できるようになるために APPROVED が必要な先行タスクID一覧"
+                    },
+                    "rejection_reason": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "直近の差し戻し理由 (APPROVED の場合は null)"
+                    },
+                    "output": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "APPROVED 時の成果物パスまたは概要。次タスクの context に受け渡す。"
+                    }
+                }
+            }
+        },
+        "grand_summary": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Phase 4 の場合のみ最終結論を記述 (それ以外は null)"
+        }
+    }
+}
