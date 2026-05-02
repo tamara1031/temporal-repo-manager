@@ -80,11 +80,13 @@ async function changedFilesIn(workdir: string): Promise<string[]> {
 export async function codexActivity(input: CodexInput): Promise<CodexOutput> {
   await ensureCodexAuth();
 
-  // We use the explicit `--sandbox workspace-write` policy rather than the
-  // `--dangerously-bypass-approvals-and-sandbox` shortcut. workspace-write
-  // confines edits to the workdir + /tmp + ~/.codex/memories, which is
-  // adequate for the orchestrator (it needs to run git inside the workdir).
-  // Approval is already `never` by default in non-interactive `codex exec`.
+  // Approval policy and sandbox are set explicitly:
+  //   --ask-for-approval never   → top-level codex flag, must precede `exec`.
+  //                                Skips every approval prompt; failures are
+  //                                returned to the model rather than escalated.
+  //   --sandbox workspace-write  → confines writes to [workdir, /tmp,
+  //                                ~/.codex/memories]. The Docker container is
+  //                                the outer security boundary.
   //
   // Caveat: empirically subagents inherit the parent's effective sandbox; the
   // per-agent TOML `sandbox_mode` field is documentation only in codex 0.128.
@@ -97,6 +99,8 @@ export async function codexActivity(input: CodexInput): Promise<CodexOutput> {
   const lastMsgDir = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-last-msg-'));
   const lastMsgPath = path.join(lastMsgDir, 'final.md');
   const args = [
+    '--ask-for-approval',
+    'never',
     'exec',
     '--sandbox',
     'workspace-write',
