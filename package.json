@@ -6,11 +6,13 @@
   "main": "dist/worker.js",
   "scripts": {
     "build": "tsc",
-    "build.bundle": "ts-node scripts/build-bundle.ts",
     "start.worker": "node dist/worker.js",
     "start.worker.dev": "ts-node src/worker.ts",
     "start.client": "ts-node src/client.ts",
     "lint": "tsc --noEmit",
+    "lint.tests": "tsc --noEmit -p tsconfig.tests.json",
+    "test": "vitest run",
+    "test.watch": "vitest",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -22,10 +24,12 @@
     "ms": "^2.1.3"
   },
   "devDependencies": {
+    "@temporalio/testing": "~1.11.8",
     "@types/ms": "^0.7.34",
     "@types/node": "^20.11.5",
     "ts-node": "^10.9.2",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
   },
   "engines": {
     "node": ">=20"

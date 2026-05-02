@@ -1,45 +1,5 @@
-import {
-  proxyActivities,
-  log,
-  workflowInfo,
-  ApplicationFailure,
-} from '@temporalio/workflow';
-import type * as activities from '../../activities';
-
-const cheap = proxyActivities<typeof activities>({
-  startToCloseTimeout: '2 minutes',
-  retry: {
-    initialInterval: '2s',
-    backoffCoefficient: 2,
-    maximumInterval: '30s',
-    maximumAttempts: 5,
-    nonRetryableErrorTypes: ['MissingCredentials'],
-  },
-});
-
-const heavy = proxyActivities<typeof activities>({
-  startToCloseTimeout: '20 minutes',
-  retry: {
-    initialInterval: '10s',
-    backoffCoefficient: 2,
-    maximumInterval: '5 minutes',
-    maximumAttempts: 4,
-    nonRetryableErrorTypes: ['MissingCredentials'],
-  },
-});
-
-const ciWait = proxyActivities<typeof activities>({
-  // Allow CI runs up to 1 hour per attempt; the activity polls and heartbeats.
-  startToCloseTimeout: '70 minutes',
-  heartbeatTimeout: '2 minutes',
-  retry: {
-    initialInterval: '15s',
-    backoffCoefficient: 2,
-    maximumInterval: '2 minutes',
-    maximumAttempts: 3,
-    nonRetryableErrorTypes: ['MissingCredentials'],
-  },
-});
+import { log, workflowInfo, ApplicationFailure } from '@temporalio/workflow';
+import { cheap, heavy, ciWait } from '../_activity-options';
 
 export interface RobustPRMergeInput {
   repoFullName: string;

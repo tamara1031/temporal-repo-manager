@@ -1,35 +1,12 @@
 import {
-  proxyActivities,
   executeChild,
   workflowInfo,
   log,
   ChildWorkflowCancellationType,
   ParentClosePolicy,
 } from '@temporalio/workflow';
-import type * as activities from '../activities';
+import { cheap, heavy } from './_activity-options';
 import { robustPRMergeWorkflow } from './shared/pr_lifecycle';
-
-const cheap = proxyActivities<typeof activities>({
-  startToCloseTimeout: '2 minutes',
-  retry: {
-    initialInterval: '2s',
-    backoffCoefficient: 2,
-    maximumInterval: '30s',
-    maximumAttempts: 5,
-    nonRetryableErrorTypes: ['MissingCredentials'],
-  },
-});
-
-const heavy = proxyActivities<typeof activities>({
-  startToCloseTimeout: '20 minutes',
-  retry: {
-    initialInterval: '10s',
-    backoffCoefficient: 2,
-    maximumInterval: '5 minutes',
-    maximumAttempts: 4,
-    nonRetryableErrorTypes: ['MissingCredentials'],
-  },
-});
 
 export interface PeriodicRefactorInput {
   repoFullName: string;
@@ -99,7 +76,7 @@ export async function periodicRefactorWorkflow(
             result.message.slice(0, 4000) +
             '\n```\n\n' +
             '### Changed files\n' +
-            result.changedFiles.map((f) => ` - ${f}`).join('\n'),
+            result.changedFiles.map((f: string) => ` - ${f}`).join('\n'),
         },
       ],
       workflowId: `pr-lifecycle-${branch}`,

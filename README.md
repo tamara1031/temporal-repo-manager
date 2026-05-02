@@ -62,6 +62,9 @@ npm run start.worker.dev
 
 # 4. Schedule をインストール
 npm run start.client -- --command=install-schedule --repo=<owner>/<repo>
+
+# 5. テスト (TestWorkflowEnvironment が裏でローカル Temporal を起動)
+npm test
 ```
 
 詳細は [`docs/architecture.md`](./docs/architecture.md) と [`docs/deployment-example.md`](./docs/deployment-example.md)。
