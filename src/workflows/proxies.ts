@@ -1,7 +1,7 @@
 import { proxyActivities } from '@temporalio/workflow';
 import type * as activities from '../activities';
 
-const NON_RETRYABLE = ['MissingCredentials'] as const;
+const NON_RETRYABLE = ['MissingCredentials', 'InvalidGitRef'] as const;
 
 /** Short, idempotent calls (gh read-only, git plumbing, status updates). */
 export const cheap = proxyActivities<typeof activities>({

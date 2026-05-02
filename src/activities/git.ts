@@ -46,6 +46,19 @@ function gitCloneUrl(repoFullName: string): string {
   return `https://github.com/${repoFullName}.git`;
 }
 
+export function remoteBranchRef(branch: string): string {
+  const trimmed = branch.trim();
+  if (!trimmed) {
+    throw ApplicationFailure.nonRetryable('base branch must not be empty', 'InvalidGitRef');
+  }
+  return `refs/remotes/origin/${trimmed}`;
+}
+
+export function fetchRemoteBranchRefSpec(branch: string): string {
+  const trimmed = branch.trim();
+  return `${trimmed}:${remoteBranchRef(trimmed)}`;
+}
+
 export async function cloneRepoActivity(input: CloneInput): Promise<CloneOutput> {
   const root = input.workspaceRoot ?? path.join(os.tmpdir(), 'repo-steward-workspaces');
   await fs.mkdir(root, { recursive: true });
@@ -67,8 +80,13 @@ export async function cloneRepoActivity(input: CloneInput): Promise<CloneOutput>
   await execOrThrow('git', ['config', 'user.name', botName], { cwd: workdir });
 
   if (input.ref) {
-    await execOrThrow('git', ['fetch', 'origin', input.ref], { cwd: workdir, env });
-    await execOrThrow('git', ['checkout', input.ref], { cwd: workdir });
+    const remoteRef = remoteBranchRef(input.ref);
+    await execOrThrow(
+      'git',
+      ['fetch', '--depth', '50', 'origin', fetchRemoteBranchRefSpec(input.ref)],
+      { cwd: workdir, env },
+    );
+    await execOrThrow('git', ['checkout', '--detach', remoteRef], { cwd: workdir });
   }
 
   await execOrThrow('git', ['checkout', '-b', input.branch], { cwd: workdir });

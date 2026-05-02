@@ -83,6 +83,11 @@ loop (≤ maxFixIterations):
 `os.tmpdir()/repo-steward-workspaces/<repo>__<random>` に clone する。
 `cleanupWorkspaceActivity` が finally で必ず削除。
 
+`baseBranch` は shallow clone 後に `refs/remotes/origin/<baseBranch>` として明示的に fetch し、
+その remote-tracking ref から `agent/refactor/<workflow-id>` を作る。これにより、GitHub repo の
+default branch ではない `develop` / `release/*` などを Schedule の対象にしても、ローカル branch
+未作成による checkout 失敗を避ける。
+
 ### Branch 命名
 `agent/refactor/<workflow-id>` 形式。Workflow ID は Schedule からの起動毎にユニーク。
 
