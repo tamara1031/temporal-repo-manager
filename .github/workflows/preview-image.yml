@@ -1,36 +1,40 @@
 name: Preview image
 
-# Build the worker Docker image and push it to GHCR as `:preview` plus a
-# short-SHA tag for immutable per-commit references. We trigger via
-# `workflow_run` after CI succeeds on `main` (so we never publish an image
-# from a red build) and via manual dispatch for ad-hoc rebuilds.
+# Worker Docker image lifecycle:
+#   - PR: build only (Dockerfile sanity). No GHCR login, no push.
+#   - main CI green (workflow_run) / manual dispatch: build + push to GHCR
+#     as `:preview` (moving) and `:sha-<short>` (immutable per-commit).
 on:
+  pull_request:
   workflow_run:
     workflows: [CI]
     types: [completed]
     branches: [main]
   workflow_dispatch:
 
-# A failed / cancelled CI run still fires `workflow_run`. We gate the job on
-# `conclusion == 'success'` so this workflow only publishes images when the
-# upstream test job actually passed (or when a human manually dispatched).
 permissions:
   contents: read
 
+# Cancel old PR builds when a new commit lands on the same PR. For main /
+# manual runs we serialize (no cancel) so we never abandon a half-pushed image.
 concurrency:
-  group: preview-image
-  cancel-in-progress: false
+  group: preview-image-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build-and-push:
-    name: build & push :preview
+  build:
+    name: ${{ github.event_name == 'pull_request' && 'build (PR sanity)' || 'build & push :preview' }}
+    # workflow_run also fires on red CI; only publish when it succeeded.
     if: >-
+      github.event_name == 'pull_request' ||
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
+      # Only need write on push-bound runs, but GitHub merges permissions
+      # by job, not by step. The login step is gated separately.
       packages: write
     steps:
       - name: Resolve checkout ref
@@ -60,18 +64,19 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build & push
+      - name: Build${{ github.event_name != 'pull_request' && ' & push' || '' }}
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.img.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
