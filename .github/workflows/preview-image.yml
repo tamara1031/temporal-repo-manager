@@ -1,0 +1,77 @@
+name: Preview image
+
+# Build the worker Docker image and push it to GHCR as `:preview` plus a
+# short-SHA tag for immutable per-commit references. We trigger via
+# `workflow_run` after CI succeeds on `main` (so we never publish an image
+# from a red build) and via manual dispatch for ad-hoc rebuilds.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+# A failed / cancelled CI run still fires `workflow_run`. We gate the job on
+# `conclusion == 'success'` so this workflow only publishes images when the
+# upstream test job actually passed (or when a human manually dispatched).
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-image
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    name: build & push :preview
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Resolve checkout ref
+        id: refs
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.refs.outputs.sha }}
+
+      - name: Compute image tags
+        id: img
+        run: |
+          name="ghcr.io/${GITHUB_REPOSITORY,,}"
+          short="${{ steps.refs.outputs.sha }}"
+          short="${short:0:7}"
+          {
+            echo "name=$name"
+            echo "tags=$name:preview,$name:sha-$short"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.img.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
