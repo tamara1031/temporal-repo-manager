@@ -3,7 +3,7 @@ import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
 import { randomUUID } from 'crypto';
 import { periodicRefactorWorkflow } from '../src/workflows';
-import { makeMockActivities } from './helpers';
+import { getWorkflowBundle, makeMockActivities } from './helpers';
 
 let env: TestWorkflowEnvironment;
 
@@ -29,7 +29,7 @@ describe('periodicRefactorWorkflow', () => {
     const worker = await Worker.create({
       connection: env.nativeConnection,
       taskQueue,
-      workflowsPath: require.resolve('../src/workflows'),
+      workflowBundle: await getWorkflowBundle(),
       activities,
     });
 
@@ -57,7 +57,7 @@ describe('periodicRefactorWorkflow', () => {
     const worker = await Worker.create({
       connection: env.nativeConnection,
       taskQueue,
-      workflowsPath: require.resolve('../src/workflows'),
+      workflowBundle: await getWorkflowBundle(),
       activities,
     });
 
@@ -73,17 +73,14 @@ describe('periodicRefactorWorkflow', () => {
     expect(result.prUrl).toContain('/pull/42');
 
     const names = calls.log.map((c) => c.name);
-    // Parent-side
     expect(names).toContain('cloneRepoActivity');
     expect(names).toContain('codexActivity');
     expect(names).toContain('commitAllActivity');
-    // Child-side (robustPRMergeWorkflow)
     expect(names).toContain('pushBranchActivity');
     expect(names).toContain('createPRActivity');
     expect(names).toContain('waitForCIActivity');
     expect(names).toContain('checkConflictActivity');
     expect(names).toContain('mergePRActivity');
-    // finally cleanup
     expect(names).toContain('cleanupWorkspaceActivity');
   });
 });

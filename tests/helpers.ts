@@ -1,11 +1,24 @@
 /**
- * Activity mock factory for workflow tests.
- *
- * The mocked surface mirrors the real activity exports in `src/activities`.
- * Each test overrides the calls it cares about; defaults are no-ops that
- * return plausible stub data so workflows run end-to-end without surprises.
+ * Activity mock factory + shared workflow bundle for tests.
  */
+import * as path from 'path';
+import { bundleWorkflowCode, type WorkflowBundleWithSourceMap } from '@temporalio/worker';
 import type * as activities from '../src/activities';
+
+let bundlePromise: Promise<WorkflowBundleWithSourceMap> | undefined;
+
+/**
+ * Bundle the workflow code once per test process. Re-using the bundle across
+ * tests avoids paying the bundler cost N times.
+ */
+export function getWorkflowBundle(): Promise<WorkflowBundleWithSourceMap> {
+  if (!bundlePromise) {
+    bundlePromise = bundleWorkflowCode({
+      workflowsPath: path.resolve(__dirname, '../src/workflows/index.ts'),
+    });
+  }
+  return bundlePromise;
+}
 
 export interface ActivityCalls {
   log: Array<{ name: string; args: unknown[] }>;
@@ -60,7 +73,6 @@ export function makeMockActivities(
     })),
   };
 
-  // Layer overrides on top, preserving the call recorder.
   const merged: typeof activities = { ...defaults } as typeof activities;
   for (const [name, fn] of Object.entries(overrides)) {
     if (typeof fn === 'function') {

@@ -150,7 +150,8 @@ export async function execCommand(
       resolve(result);
     });
 
-    // Pipe optional stdin in a single call; `end()` flushes.
+    // Suppress EPIPE: the child may exit before stdin is fully drained.
+    child.stdin.on('error', () => undefined);
     child.stdin.end(options.input ?? '');
   });
 }

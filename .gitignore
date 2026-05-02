@@ -1,3 +1,6 @@
 
 # APM dependencies
 apm_modules/
+
+# node dependencies
+node_modules/

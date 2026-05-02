@@ -4,7 +4,7 @@ import { Worker } from '@temporalio/worker';
 import { WorkflowFailedError } from '@temporalio/client';
 import { randomUUID } from 'crypto';
 import { robustPRMergeWorkflow } from '../src/workflows';
-import { makeMockActivities } from './helpers';
+import { getWorkflowBundle, makeMockActivities } from './helpers';
 
 let env: TestWorkflowEnvironment;
 
@@ -34,7 +34,7 @@ async function runWith(
   const worker = await Worker.create({
     connection: env.nativeConnection,
     taskQueue: taskQueueName,
-    workflowsPath: require.resolve('../src/workflows'),
+    workflowBundle: await getWorkflowBundle(),
     activities,
   });
   const promise = env.client.workflow.execute(robustPRMergeWorkflow, {
