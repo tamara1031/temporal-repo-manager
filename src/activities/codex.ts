@@ -80,9 +80,17 @@ async function changedFilesIn(workdir: string): Promise<string[]> {
 export async function codexActivity(input: CodexInput): Promise<CodexOutput> {
   await ensureCodexAuth();
 
-  // The Worker container is itself the security boundary, so we let codex run
-  // shell tools without bubblewrap (which otherwise fails with
-  // `bwrap: No permissions to create a new namespace` inside Docker).
+  // We use the explicit `--sandbox workspace-write` policy rather than the
+  // `--dangerously-bypass-approvals-and-sandbox` shortcut. workspace-write
+  // confines edits to the workdir + /tmp + ~/.codex/memories, which is
+  // adequate for the orchestrator (it needs to run git inside the workdir).
+  // Approval is already `never` by default in non-interactive `codex exec`.
+  //
+  // Caveat: empirically subagents inherit the parent's effective sandbox; the
+  // per-agent TOML `sandbox_mode` field is documentation only in codex 0.128.
+  // Read-only enforcement for reviewers is therefore prompt + post-hoc
+  // `git diff` audit, not the TOML field.
+  //
   // `--output-last-message` lets us capture the orchestrator's *final* reply
   // separately from the noisy combined stdout (which contains every subagent
   // spawn / wait line). The final reply is what we want as PR body.
@@ -90,7 +98,8 @@ export async function codexActivity(input: CodexInput): Promise<CodexOutput> {
   const lastMsgPath = path.join(lastMsgDir, 'final.md');
   const args = [
     'exec',
-    '--dangerously-bypass-approvals-and-sandbox',
+    '--sandbox',
+    'workspace-write',
     '--output-last-message',
     lastMsgPath,
   ];

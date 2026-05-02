@@ -7,7 +7,9 @@ FROM node:20-bookworm-slim AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# System packages: git for cloning, curl/ca-certificates for installing gh.
+# System packages: git for cloning, curl/ca-certificates for installing gh,
+# bubblewrap so codex can use `--sandbox <mode>` (instead of the bypass flag)
+# without falling back to its vendored bwrap, which doesn't enforce reliably.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       git \
@@ -16,6 +18,7 @@ RUN apt-get update \
       gnupg \
       openssh-client \
       jq \
+      bubblewrap \
  && rm -rf /var/lib/apt/lists/*
 
 # Install GitHub CLI (gh) from the official apt repo.
