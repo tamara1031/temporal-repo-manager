@@ -51,9 +51,14 @@ Temporal Schedule ──▶ periodicRefactorWorkflow ──▶ robustPRMergeWork
 │   └── workflows/                   # Workflow 定義（決定論的）
 │       ├── index.ts
 │       ├── proxies.ts               # proxyActivities (cheap / heavy / *Codex / advisor / ciWait)
-│       ├── periodic.ts              # periodicRefactorWorkflow
+│       ├── periodic.ts              # periodicRefactorWorkflow (orchestrator)
 │       ├── pr-lifecycle.ts          # robustPRMergeWorkflow (child)
-│       └── _internal/               # workflow ヘルパー (advisor budget / porcelain diff)
+│       └── _internal/               # workflow ヘルパー (非ワークフロー)
+│           ├── advisor.ts           # advisor budget + consult protocol
+│           ├── porcelain.ts         # git status diff helpers
+│           ├── refactor-report.ts   # PR body renderer (pure)
+│           ├── refactor-step-loop.ts# per-step implement→Parliament loop
+│           └── spawn-budget.ts      # codex spawn counter + cap
 ├── tests/
 │   ├── exec.test.ts                 # spawn ラッパー
 │   ├── git.test.ts                  # git env ヘルパー
