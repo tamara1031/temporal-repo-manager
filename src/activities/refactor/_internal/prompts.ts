@@ -24,7 +24,7 @@
  * (tests, activities). Workflow code never imports this file directly.
  */
 
-import type { ContextArtifact, PlanStep, ReviewConcern } from './refactor';
+import type { ContextArtifact, PlanStep, ReviewConcern } from './types';
 
 // ──────────────────────────────────────────────────────────────────────────
 // Static-preamble helpers (identical bytes across plan/implement/review for

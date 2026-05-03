@@ -1,4 +1,4 @@
-import { invalidGhOutput, isRecord, parseGhJSON } from './github-json';
+import { invalidGhOutput, isRecord, parseGhJSON } from './gh-json';
 
 export interface RollupCheck {
   name: string;

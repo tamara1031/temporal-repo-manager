@@ -6,7 +6,7 @@ import {
   extractRunId,
   parseStatusCheckRollupJSON,
   type RollupCheck,
-} from '../src/activities/github-ci';
+} from '../src/activities/github/_internal/ci-rollup';
 
 describe('github CI helpers', () => {
   it('parses missing statusCheckRollup as empty', () => {

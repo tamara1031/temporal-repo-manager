@@ -5,7 +5,7 @@ import {
   execOrThrow,
   CommandFailed,
   type ExecResult,
-} from '../src/activities/exec';
+} from '../src/activities/_internal/exec';
 
 /** Wrap MockActivityEnvironment.run so the return type is properly inferred. */
 function inActivity<R>(env: MockActivityEnvironment, fn: () => Promise<R>): Promise<R> {
