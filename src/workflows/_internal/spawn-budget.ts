@@ -12,6 +12,19 @@
  */
 
 /**
+ * All valid codex-spawn role names in this pipeline.
+ * Defining the union here means a typo in any call site is a compile error
+ * rather than a silent new category in the perRole ledger.
+ */
+export type SpawnRole =
+  | 'context'
+  | 'planner'
+  | 'plan-reviewer'
+  | 'plan-refiner'
+  | 'implementer'
+  | 'reviewer';
+
+/**
  * Default spawn cap for `periodicRefactorWorkflow`.
  *
  * Worst-case spawns with the design parliament (maxRounds=1):
@@ -32,6 +45,21 @@ export class SpawnCounter {
   consume(role: string, n: number): void {
     this.counts[role] = (this.counts[role] ?? 0) + n;
     this.total += n;
+  }
+  /**
+   * Reconcile spawn counts returned from a child workflow.
+   * Accepts `Record<string, number>` (not `SpawnRole`) because child workflow
+   * outputs are plain JSON — compile-time enforcement is not possible across
+   * the serialization boundary. Does NOT check the cap; this records what
+   * already happened inside the child.
+   */
+  merge(counts: Record<string, number>): void {
+    for (const [role, n] of Object.entries(counts)) {
+      if (n > 0) {
+        this.counts[role] = (this.counts[role] ?? 0) + n;
+        this.total += n;
+      }
+    }
   }
   remaining(): number {
     return Math.max(0, this.cap - this.total);
