@@ -9,12 +9,15 @@ import {
 import { cheap, heavy, contextCodex, planCodex } from './proxies';
 import { robustPRMergeWorkflow } from './pr-lifecycle';
 import { refactorStepWorkflow } from './refactor-step';
-import type { ContextArtifact, PlanOutput, ReviewConcern } from '../activities/refactor';
+import type { ContextArtifact, PlanOutput } from '../activities/refactor';
 import { filesFromPorcelain } from './_internal/porcelain';
 import { AdvisorBudget, type AdvisorAuditEntry } from './_internal/advisor';
 import { renderReport, type StepRecord } from './_internal/refactor-report';
 import { DEFAULT_PERIODIC_SPAWN_CAP, SpawnCounter } from './_internal/spawn-budget';
-import type { CircuitBreaker, StepLoopConfig } from './_internal/refactor-step-loop';
+import {
+  DEFAULT_STEP_LOOP_CONFIG,
+  type CircuitBreaker,
+} from './_internal/refactor-step-loop';
 
 export interface PeriodicRefactorInput {
   repoFullName: string;
@@ -56,18 +59,6 @@ export interface PeriodicRefactorOutput {
 
 /** Hard cap on plan steps regardless of what the planner returns. */
 const MAX_STEPS = 2;
-
-const STEP_LOOP_CONFIG: StepLoopConfig = {
-  /** Per-step iteration cap (iter 0..maxIter-1). */
-  maxIter: 2,
-  /** Pre-Parliament gate: skip reviewers when (insertions + deletions) is below this. */
-  trivialLineThreshold: 30,
-  /** Pre-Parliament gate: skip reviewers when filesChanged is below this. */
-  trivialFileThreshold: 3,
-  /** Diff text size handed to each reviewer. */
-  reviewDiffBytes: 8 * 1024,
-  reviewerConcerns: ['correctness', 'quality'] as const satisfies readonly ReviewConcern[],
-};
 
 /**
  * periodicRefactorWorkflow — runs on a Temporal Schedule.
@@ -157,7 +148,7 @@ export async function periodicRefactorWorkflow(
             contextArtifact,
             spawnBudget: spawnCounter.remaining(),
             advisorBudget: advisorBudget.remaining(),
-            config: STEP_LOOP_CONFIG,
+            config: DEFAULT_STEP_LOOP_CONFIG,
           },
         ],
         workflowId: `refactor-step-${info.workflowId}-${stepIndex}`.replace(/:/g, '-'),

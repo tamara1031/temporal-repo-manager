@@ -26,6 +26,13 @@ import {
 } from './_internal/refactor-step-loop';
 import type { StepRecord } from './_internal/refactor-report';
 
+// Re-export the canonical default so consumers (orchestrators + tests) get
+// `refactorStepWorkflow` and its config defaults from a single import path.
+export {
+  DEFAULT_STEP_LOOP_CONFIG,
+  type StepLoopConfig,
+} from './_internal/refactor-step-loop';
+
 export interface RefactorStepInput {
   step: PlanStep;
   workdir: string;

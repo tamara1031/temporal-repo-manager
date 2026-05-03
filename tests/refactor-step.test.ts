@@ -20,7 +20,10 @@ import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
 import { randomUUID } from 'crypto';
 import { refactorStepWorkflow } from '../src/workflows';
-import type { RefactorStepInput } from '../src/workflows/refactor-step';
+import {
+  DEFAULT_STEP_LOOP_CONFIG,
+  type RefactorStepInput,
+} from '../src/workflows/refactor-step';
 import { getWorkflowBundle, makeMockActivities } from './helpers';
 
 let env: TestWorkflowEnvironment;
@@ -48,13 +51,7 @@ const baseInput: RefactorStepInput = {
   },
   spawnBudget: 16,
   advisorBudget: 1,
-  config: {
-    maxIter: 2,
-    trivialLineThreshold: 30,
-    trivialFileThreshold: 3,
-    reviewDiffBytes: 8 * 1024,
-    reviewerConcerns: ['correctness', 'quality'],
-  },
+  config: DEFAULT_STEP_LOOP_CONFIG,
 };
 
 async function runWorkflow(

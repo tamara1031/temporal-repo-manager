@@ -53,6 +53,20 @@ export interface StepLoopConfig {
   reviewerConcerns: readonly ReviewConcern[];
 }
 
+/**
+ * Canonical defaults for orchestrators that drive `refactorStepWorkflow`.
+ * Lives next to `StepLoopConfig` so the constant and the type stay in sync.
+ * Callers either pass this directly as `RefactorStepInput.config` or spread
+ * it (`{ ...DEFAULT_STEP_LOOP_CONFIG, maxIter: 1 }`) for one-off overrides.
+ */
+export const DEFAULT_STEP_LOOP_CONFIG: StepLoopConfig = {
+  maxIter: 2,
+  trivialLineThreshold: 30,
+  trivialFileThreshold: 3,
+  reviewDiffBytes: 8 * 1024,
+  reviewerConcerns: ['correctness', 'quality'],
+};
+
 export interface RunStepInput {
   step: PlanStep;
   workdir: string;
