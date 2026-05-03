@@ -6,7 +6,10 @@ name: Release
 #      stable release exists, the baseline is v0.0.0 (so `patch` → v0.0.1,
 #      `minor` → v0.1.0, `major` → v1.0.0).
 #   2. Builds the Worker Docker image once and pushes to GHCR with:
-#        :<version>  immutable, e.g. ghcr.io/<owner>/<repo>:v1.2.3
+#        :<version>  immutable, e.g. ghcr.io/<owner>/<repo>:1.2.3
+#                    (the leading `v` from the git tag is stripped for the
+#                    image tag so registries get plain semver, which is the
+#                    OCI / docker convention)
 #        :latest     moving — pinned to the most recent stable release only
 #                    (pre-releases via `version_override` do NOT bump :latest)
 #   3. Creates a GitHub Release on `target_sha` after the push succeeds.
@@ -124,13 +127,17 @@ jobs:
         run: |
           name="ghcr.io/${GITHUB_REPOSITORY,,}"
           v='${{ steps.bumper.outputs.version }}'
-          # Move :latest only for stable releases — pre-releases (v1.2.3-rc.1)
+          # Strip the leading `v` so the registry sees plain semver
+          # (`1.2.3` rather than `v1.2.3`). The git tag and GitHub Release
+          # name keep the `v` prefix; only the image tag is bare.
+          image_v="${v#v}"
+          # Move :latest only for stable releases — pre-releases (1.2.3-rc.1)
           # publish their immutable tag but never become the default pull.
-          if echo "$v" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            tags="$name:$v,$name:latest"
+          if echo "$image_v" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            tags="$name:$image_v,$name:latest"
             stable=true
           else
-            tags="$name:$v"
+            tags="$name:$image_v"
             stable=false
           fi
           {
