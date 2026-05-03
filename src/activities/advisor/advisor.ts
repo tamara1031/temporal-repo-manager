@@ -23,8 +23,8 @@
  */
 
 import { ApplicationFailure } from '@temporalio/activity';
+import { extractJsonObject } from '../_internal/json-extract';
 import { runCodexExec } from '../_internal/run-codex';
-import { extractJsonObject } from '../refactor/_internal/parsers';
 
 export type AdvisorVerdict = 'retry' | 'abort' | 'change-strategy';
 
