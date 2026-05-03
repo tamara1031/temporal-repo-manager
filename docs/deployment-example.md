@@ -67,8 +67,16 @@ spec:
             - name: HOME
               value: /home/agent
           volumeMounts:
-            - name: codex-auth
+            # codex は $CODEX_HOME (= ~/.codex) 配下に session rollout / history.jsonl /
+            # log を書き出すため、ディレクトリ全体を readOnly Secret で覆うと
+            # `Error: Read-only file system (os error 30)` で exit 1 する。
+            # auth.json だけを subPath でファイル単位マウントし、ディレクトリ自体は
+            # 書き込み可能な emptyDir にする。
+            - name: codex-state
               mountPath: /home/agent/.codex
+            - name: codex-auth
+              mountPath: /home/agent/.codex/auth.json
+              subPath: auth.json
               readOnly: true
             - name: workspaces
               mountPath: /workspaces
@@ -83,6 +91,9 @@ spec:
               - key: auth.json
                 path: auth.json
             defaultMode: 0400
+        - name: codex-state
+          emptyDir:
+            sizeLimit: 256Mi
         - name: workspaces
           emptyDir:
             sizeLimit: 10Gi
