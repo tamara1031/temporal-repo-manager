@@ -19,7 +19,6 @@ import type {
   ContextArtifact,
   PlanOutput,
   PlanStep,
-  ReviewOutput,
   ReviewConcern,
 } from '../activities/refactor';
 import { arraysEqual, diffPorcelain, filesFromPorcelain } from './_internal/porcelain';
@@ -28,6 +27,11 @@ import {
   consultAdvisor,
   type AdvisorAuditEntry,
 } from './_internal/advisor';
+import {
+  renderReport,
+  type ParliamentSummary,
+  type StepRecord,
+} from './_internal/refactor-report';
 
 export interface PeriodicRefactorInput {
   repoFullName: string;
@@ -85,31 +89,6 @@ const MAX_ITER = 2;
 const REVIEW_DIFF_BYTES = 8 * 1024;
 
 const REVIEWER_CONCERNS: readonly ReviewConcern[] = ['correctness', 'quality'];
-
-/**
- * Per-step ledger entry retained for the final PR body. Workflow state stays
- * small — we keep only what the report needs, not raw codex output.
- */
-interface StepRecord {
-  step: PlanStep;
-  outcome:
-    | 'converged'
-    | 'parliament-skipped'
-    | 'dropped-no-progress'
-    | 'dropped-not-converged'
-    | 'rolled-back-critical-block';
-  iters: number;
-  implementReports: string[];
-  parliamentSummary: ParliamentSummary[];
-  driftReverts: string[];
-}
-
-interface ParliamentSummary {
-  iter: number;
-  /** Empty when Parliament was skipped (trivial diff). */
-  reviews: { concern: ReviewConcern; verdict: ReviewOutput['verdict']; bullets: string[] }[];
-  skipped?: 'trivial-diff';
-}
 
 /**
  * periodicRefactorWorkflow — runs on a Temporal Schedule.
@@ -388,6 +367,7 @@ export async function periodicRefactorWorkflow(
       spawnSummary: spawnCounter.summary(),
       branch,
       advisorAudits,
+      stepCap: MAX_STEPS,
     });
 
     await heavy.commitAllActivity({
@@ -461,100 +441,3 @@ class SpawnCounter {
   }
 }
 
-interface ReportInput {
-  plan: PlanOutput;
-  droppedFromPlan: PlanStep[];
-  stepRecords: StepRecord[];
-  circuitBroken?: { step: PlanStep; concern: ReviewConcern; bullets: string[] };
-  spawnSummary: { total: number; cap: number; perRole: Record<string, number> };
-  branch: string;
-  advisorAudits: AdvisorAuditEntry[];
-}
-
-function renderReport(r: ReportInput): string {
-  const lines: string[] = [];
-  lines.push('## Theme and intent');
-  lines.push(`**${r.plan.theme}** — ${r.plan.rationale}`);
-  lines.push('');
-  if (r.circuitBroken) {
-    lines.push('## ⛔ Circuit breaker fired');
-    lines.push(
-      `Reviewer **${r.circuitBroken.concern}** issued \`critical_block\` on step "${r.circuitBroken.step.title}". Working tree restored.`,
-    );
-    for (const b of r.circuitBroken.bullets) lines.push(`- ${b}`);
-    lines.push('');
-  }
-  lines.push('## Step outcomes');
-  for (const rec of r.stepRecords) {
-    lines.push(`### Step: ${rec.step.title} — ${rec.outcome} (${rec.iters} iter)`);
-    lines.push(rec.step.description);
-    lines.push('');
-    if (rec.implementReports.length > 0) {
-      lines.push('**Implementer report (final iter):**');
-      lines.push('');
-      lines.push(rec.implementReports[rec.implementReports.length - 1]);
-      lines.push('');
-    }
-    if (rec.parliamentSummary.length > 0) {
-      lines.push('**Parliament:**');
-      for (const ps of rec.parliamentSummary) {
-        if (ps.skipped) {
-          lines.push(`- iter ${ps.iter}: skipped (${ps.skipped})`);
-          continue;
-        }
-        for (const rv of ps.reviews) {
-          const tag = `[${rv.concern}: ${rv.verdict}]`;
-          if (rv.bullets.length === 0) {
-            lines.push(`- iter ${ps.iter} ${tag} (no findings)`);
-          } else {
-            lines.push(`- iter ${ps.iter} ${tag}`);
-            for (const b of rv.bullets) lines.push(`  - ${b}`);
-          }
-        }
-      }
-      lines.push('');
-    }
-    if (rec.driftReverts.length > 0) {
-      lines.push('**Reviewer drift reverted:**');
-      for (const f of rec.driftReverts) lines.push(`- ${f}`);
-      lines.push('');
-    }
-  }
-  if (r.droppedFromPlan.length > 0) {
-    lines.push('## ⚠️ Dropped by step cap');
-    lines.push(`Planner returned ${r.droppedFromPlan.length + r.stepRecords.length} steps; cap is ${MAX_STEPS}. Dropped:`);
-    for (const s of r.droppedFromPlan) lines.push(`- ${s.title}`);
-    lines.push('');
-  }
-  lines.push('## Spawn budget');
-  lines.push(`Used **${r.spawnSummary.total} / ${r.spawnSummary.cap}** codex calls.`);
-  for (const [role, n] of Object.entries(r.spawnSummary.perRole)) {
-    lines.push(`- ${role}: ${n}`);
-  }
-  lines.push('');
-  if (r.advisorAudits.length > 0) {
-    lines.push('## Advisor consults');
-    lines.push(
-      'The advisor (top-tier model) was consulted at the following decision gates. ' +
-        'Verdicts are advisory; the rollback / continue defaults still applied unless ' +
-        'the workflow comment notes otherwise.',
-    );
-    lines.push('');
-    for (const a of r.advisorAudits) {
-      lines.push(`### Gate: \`${a.gate}\``);
-      lines.push(`> ${a.situation}`);
-      if (a.reply) {
-        lines.push(`- **Verdict**: \`${a.reply.verdict}\``);
-        if (a.reply.rationale) lines.push(`- **Rationale**: ${a.reply.rationale}`);
-        if (a.reply.suggestedAction) lines.push(`- **Suggested action**: ${a.reply.suggestedAction}`);
-      } else if (a.error) {
-        lines.push(`- (advisor call failed: ${a.error.slice(0, 200)})`);
-      } else {
-        lines.push('- (advisor budget exhausted; default path taken)');
-      }
-      lines.push('');
-    }
-  }
-  lines.push(`*Branch: \`${r.branch}\`. Generated by periodicRefactorWorkflow.*`);
-  return lines.join('\n');
-}
