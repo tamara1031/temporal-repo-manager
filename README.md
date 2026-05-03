@@ -4,7 +4,9 @@ Pull 型・Webhook 不要・Temporal 駆動の自律 AI エージェント基盤
 定期的にリポジトリを巡回してリファクタ PR を出し、CI が落ちたら自己修復してマージまで完遂する。
 
 ```
-Temporal Schedule ──▶ periodicRefactorWorkflow ──▶ robustPRMergeWorkflow (child) ──▶ merge
+Temporal Schedule ──▶ periodicRefactorWorkflow
+                          ├─▶ refactorStepWorkflow (child, ×N steps)  — implement → review loop
+                          └─▶ robustPRMergeWorkflow (child)            — push → CI → merge
 ```
 
 ## できること
@@ -22,7 +24,8 @@ Temporal Schedule ──▶ periodicRefactorWorkflow ──▶ robustPRMergeWork
   を区別。observe で MERGED が見えるまでポーリングし、見えなければ `merge-queued` を返す。
 
 > Issue 駆動ルートと Claude 連携はいったん外しています。
-> 復活させるときは `robustPRMergeWorkflow` を子として再利用すれば容易に追加可能。
+> 復活させるときは `refactorStepWorkflow`（implement→review ループ）と
+> `robustPRMergeWorkflow`（push→CI→merge）を子として再利用すれば容易に追加可能。
 
 ## ディレクトリ構成
 
@@ -52,12 +55,13 @@ Temporal Schedule ──▶ periodicRefactorWorkflow ──▶ robustPRMergeWork
 │       ├── index.ts
 │       ├── proxies.ts               # proxyActivities (cheap / heavy / *Codex / advisor / ciWait)
 │       ├── periodic.ts              # periodicRefactorWorkflow (orchestrator)
+│       ├── refactor-step.ts         # refactorStepWorkflow (child, 1 plan step)
 │       ├── pr-lifecycle.ts          # robustPRMergeWorkflow (child)
 │       └── _internal/               # workflow ヘルパー (非ワークフロー)
 │           ├── advisor.ts           # advisor budget + consult protocol
 │           ├── porcelain.ts         # git status diff helpers
 │           ├── refactor-report.ts   # PR body renderer (pure)
-│           ├── refactor-step-loop.ts# per-step implement→Parliament loop
+│           ├── refactor-step-loop.ts# implement→Parliament loop body (used by refactor-step.ts)
 │           └── spawn-budget.ts      # codex spawn counter + cap
 ├── tests/
 │   ├── exec.test.ts                 # spawn ラッパー
