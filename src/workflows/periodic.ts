@@ -32,6 +32,7 @@ import {
   type ParliamentSummary,
   type StepRecord,
 } from './_internal/refactor-report';
+import { DEFAULT_PERIODIC_SPAWN_CAP, SpawnCounter } from './_internal/spawn-budget';
 
 export interface PeriodicRefactorInput {
   repoFullName: string;
@@ -71,13 +72,6 @@ export interface PeriodicRefactorOutput {
   skipped?: 'no-changes' | 'no-op-plan' | 'plan-failed';
 }
 
-/**
- * Hard cap on codex spawns per periodic run. Mirrors `easy-agent`'s
- * `max_consults` — the orchestrator (this workflow) counts and stops. Worst
- * case is now 1 context-extractor + 1 planner + 2 steps × 2 iter ×
- * (1 implementer + 2 reviewers) = 14. Cap of 16 leaves a 2-spawn retry buffer.
- */
-const MAX_SPAWNS = 16;
 /** Pre-Parliament gate: skip reviewers when (insertions + deletions) AND files are below these. */
 const TRIVIAL_LINE_THRESHOLD = 30;
 const TRIVIAL_FILE_THRESHOLD = 3;
@@ -111,7 +105,7 @@ export async function periodicRefactorWorkflow(
     ref: baseBranch,
   });
   const workdir = clone.workdir;
-  const spawnCounter = new SpawnCounter(MAX_SPAWNS);
+  const spawnCounter = new SpawnCounter(DEFAULT_PERIODIC_SPAWN_CAP);
   const advisorBudget = new AdvisorBudget(input.maxAdvisorConsults ?? 1);
   const advisorAudits: AdvisorAuditEntry[] = [];
 
@@ -415,29 +409,6 @@ export async function periodicRefactorWorkflow(
         log.warn('cleanupWorkspaceActivity failed', { workdir, err: String(err) });
       }
     });
-  }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Internal helpers — pure, deterministic, safe inside a workflow.
-// ──────────────────────────────────────────────────────────────────────────
-
-class SpawnCounter {
-  private readonly counts: Record<string, number> = {};
-  private total = 0;
-  constructor(private readonly cap: number) {}
-  canConsume(n: number): boolean {
-    return this.total + n <= this.cap;
-  }
-  consume(role: string, n: number): void {
-    this.counts[role] = (this.counts[role] ?? 0) + n;
-    this.total += n;
-  }
-  remaining(): number {
-    return Math.max(0, this.cap - this.total);
-  }
-  summary(): { total: number; cap: number; perRole: Record<string, number> } {
-    return { total: this.total, cap: this.cap, perRole: { ...this.counts } };
   }
 }
 

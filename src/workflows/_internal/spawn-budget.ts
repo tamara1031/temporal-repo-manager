@@ -1,0 +1,40 @@
+/**
+ * Spawn-budget bookkeeping for codex-driven workflows.
+ *
+ * Mirrors `easy-agent`'s `max_consults`: the orchestrator counts every codex
+ * spawn (context / planner / implementer / reviewers / etc.) against a hard
+ * cap, and stops issuing new ones once the budget is exhausted. Workflow
+ * state stays small — we keep just `{ total, perRole }` rather than raw
+ * codex output.
+ *
+ * Determinism: pure data structure, no Temporal API. Safe to import from
+ * any workflow file.
+ */
+
+/**
+ * Default spawn cap for `periodicRefactorWorkflow`.
+ *
+ * Worst-case spawns under the current orchestrator: 1 context-extractor +
+ * 1 planner + 2 steps × 2 iter × (1 implementer + 2 reviewers) = 14. Cap
+ * of 16 leaves a 2-spawn retry buffer for transient failures.
+ */
+export const DEFAULT_PERIODIC_SPAWN_CAP = 16;
+
+export class SpawnCounter {
+  private readonly counts: Record<string, number> = {};
+  private total = 0;
+  constructor(private readonly cap: number) {}
+  canConsume(n: number): boolean {
+    return this.total + n <= this.cap;
+  }
+  consume(role: string, n: number): void {
+    this.counts[role] = (this.counts[role] ?? 0) + n;
+    this.total += n;
+  }
+  remaining(): number {
+    return Math.max(0, this.cap - this.total);
+  }
+  summary(): { total: number; cap: number; perRole: Record<string, number> } {
+    return { total: this.total, cap: this.cap, perRole: { ...this.counts } };
+  }
+}
