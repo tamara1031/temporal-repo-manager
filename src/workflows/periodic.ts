@@ -6,33 +6,18 @@ import {
   ChildWorkflowCancellationType,
   ParentClosePolicy,
 } from '@temporalio/workflow';
-import {
-  cheap,
-  heavy,
-  contextCodex,
-  planCodex,
-  implementCodex,
-  reviewCodex,
-} from './proxies';
+import { cheap, heavy, contextCodex, planCodex } from './proxies';
 import { robustPRMergeWorkflow } from './pr-lifecycle';
-import type {
-  ContextArtifact,
-  PlanOutput,
-  PlanStep,
-  ReviewConcern,
-} from '../activities/refactor';
-import { arraysEqual, diffPorcelain, filesFromPorcelain } from './_internal/porcelain';
-import {
-  AdvisorBudget,
-  consultAdvisor,
-  type AdvisorAuditEntry,
-} from './_internal/advisor';
-import {
-  renderReport,
-  type ParliamentSummary,
-  type StepRecord,
-} from './_internal/refactor-report';
+import type { ContextArtifact, PlanOutput, ReviewConcern } from '../activities/refactor';
+import { filesFromPorcelain } from './_internal/porcelain';
+import { AdvisorBudget, type AdvisorAuditEntry } from './_internal/advisor';
+import { renderReport, type StepRecord } from './_internal/refactor-report';
 import { DEFAULT_PERIODIC_SPAWN_CAP, SpawnCounter } from './_internal/spawn-budget';
+import {
+  runRefactorStep,
+  type CircuitBreaker,
+  type StepLoopConfig,
+} from './_internal/refactor-step-loop';
 
 export interface PeriodicRefactorInput {
   repoFullName: string;
@@ -72,17 +57,20 @@ export interface PeriodicRefactorOutput {
   skipped?: 'no-changes' | 'no-op-plan' | 'plan-failed';
 }
 
-/** Pre-Parliament gate: skip reviewers when (insertions + deletions) AND files are below these. */
-const TRIVIAL_LINE_THRESHOLD = 30;
-const TRIVIAL_FILE_THRESHOLD = 3;
 /** Hard cap on plan steps regardless of what the planner returns. */
 const MAX_STEPS = 2;
-/** Per-step iteration cap (iter 0..MAX_ITER-1). */
-const MAX_ITER = 2;
-/** Diff text size handed to each reviewer. */
-const REVIEW_DIFF_BYTES = 8 * 1024;
 
-const REVIEWER_CONCERNS: readonly ReviewConcern[] = ['correctness', 'quality'];
+const STEP_LOOP_CONFIG: StepLoopConfig = {
+  /** Per-step iteration cap (iter 0..maxIter-1). */
+  maxIter: 2,
+  /** Pre-Parliament gate: skip reviewers when (insertions + deletions) is below this. */
+  trivialLineThreshold: 30,
+  /** Pre-Parliament gate: skip reviewers when filesChanged is below this. */
+  trivialFileThreshold: 3,
+  /** Diff text size handed to each reviewer. */
+  reviewDiffBytes: 8 * 1024,
+  reviewerConcerns: ['correctness', 'quality'] as const satisfies readonly ReviewConcern[],
+};
 
 /**
  * periodicRefactorWorkflow — runs on a Temporal Schedule.
@@ -146,196 +134,30 @@ export async function periodicRefactorWorkflow(
 
     // ── Phase 2. Step loop ───────────────────────────────────────────────
     const stepRecords: StepRecord[] = [];
-    let circuitBroken: { step: PlanStep; concern: ReviewConcern; bullets: string[] } | undefined;
+    let circuitBroken: CircuitBreaker | undefined;
 
-    stepLoop: for (const step of plannedSteps) {
-      const record: StepRecord = {
+    for (const step of plannedSteps) {
+      const result = await runRefactorStep({
         step,
-        outcome: 'dropped-not-converged',
-        iters: 0,
-        implementReports: [],
-        parliamentSummary: [],
-        driftReverts: [],
-      };
-      const accumulatedFeedback: string[] = [];
-      let lastDiffSnapshot: { entries: string[] } | undefined;
+        workdir,
+        contextArtifact,
+        spawnCounter,
+        advisorBudget,
+        advisorAudits,
+        config: STEP_LOOP_CONFIG,
+      });
 
-      for (let iter = 0; iter < MAX_ITER; iter++) {
-        record.iters = iter + 1;
-
-        // 1. Implement
-        if (!spawnCounter.canConsume(1)) {
-          log.warn('spawn budget would be exceeded by implementer; halting step', {
-            step: step.title,
-          });
-          break stepLoop;
-        }
-        spawnCounter.consume('implementer', 1);
-        const implResult = await implementCodex.implementActivity({
-          workdir,
-          contextArtifact,
-          step,
-          priorFeedback: accumulatedFeedback,
-        });
-        record.implementReports.push(implResult.report);
-
-        // 2. Diff snapshot — drift baseline + no-progress check
-        const postImplStatus = await cheap.statusPorcelainActivity({ workdir });
-        if (
-          iter > 0 &&
-          lastDiffSnapshot &&
-          arraysEqual(lastDiffSnapshot.entries, postImplStatus.entries)
-        ) {
-          log.info('no progress between iterations; rolling back this step', {
-            step: step.title,
-          });
-          await cheap.restoreActivity({ workdir, paths: filesFromPorcelain(postImplStatus.entries) });
-          record.outcome = 'dropped-no-progress';
-          continue stepLoop;
-        }
-        lastDiffSnapshot = postImplStatus;
-
-        // 3. Pre-Parliament Gate (trivial diff → skip Parliament)
-        const stat = await cheap.diffStatActivity({ workdir });
-        const isTrivial =
-          stat.insertions + stat.deletions < TRIVIAL_LINE_THRESHOLD &&
-          stat.filesChanged < TRIVIAL_FILE_THRESHOLD;
-
-        if (isTrivial) {
-          record.parliamentSummary.push({
-            iter,
-            reviews: [],
-            skipped: 'trivial-diff',
-          });
-          record.outcome = 'parliament-skipped';
-          continue stepLoop;
-        }
-
-        // 4. Parliament — parallel correctness + quality reviewers
-        const remainingBudget = spawnCounter.remaining();
-        if (remainingBudget < REVIEWER_CONCERNS.length) {
-          log.warn('spawn budget too low for Parliament; halting step', {
-            step: step.title,
-            remainingBudget,
-          });
-          break stepLoop;
-        }
-        spawnCounter.consume('reviewer', REVIEWER_CONCERNS.length);
-        const diffText = await cheap.diffTextActivity({ workdir, maxBytes: REVIEW_DIFF_BYTES });
-        const reviews = await Promise.all(
-          REVIEWER_CONCERNS.map((concern) =>
-            reviewCodex.reviewActivity({
-              workdir,
-              contextArtifact,
-              step,
-              diff: diffText.text,
-              concern,
-            }),
-          ),
-        );
-
-        // 5. Drift audit — revert any reviewer-introduced changes
-        const postReviewStatus = await cheap.statusPorcelainActivity({ workdir });
-        const driftedFiles = diffPorcelain(postImplStatus.entries, postReviewStatus.entries);
-        if (driftedFiles.length > 0) {
-          log.warn('reviewer drift detected; reverting', { files: driftedFiles });
-          await cheap.restoreActivity({ workdir, paths: driftedFiles });
-          record.driftReverts.push(...driftedFiles);
-        }
-
-        // 6. Aggregate
-        record.parliamentSummary.push({
-          iter,
-          reviews: reviews.map((r, i) => ({
-            concern: REVIEWER_CONCERNS[i],
-            verdict: r.verdict,
-            bullets: [...r.blocking_issues, ...r.suggestions].slice(0, 3),
-          })),
-        });
-
-        const blocker = reviews.findIndex((r) => r.verdict === 'critical_block');
-        if (blocker >= 0) {
-          const blockerConcern = REVIEWER_CONCERNS[blocker];
-          const blockerBullets = [
-            ...reviews[blocker].blocking_issues,
-            ...reviews[blocker].suggestions,
-          ].slice(0, 3);
-
-          // Optional advisor consult: critical_block is a hard rollback by
-          // default, but a single reviewer can be over-cautious. Only `retry`
-          // from the advisor downgrades to needs_revision (loop with feedback);
-          // anything else (or no consult — budget exhausted, advisor failed)
-          // keeps the rollback. Note: with the default budget=1, only the
-          // first critical_block per workflow gets a consult.
-          const { reply, audit } = await consultAdvisor(advisorBudget, 'critical-block', {
-            workdir,
-            situation: `Reviewer (${blockerConcern}) issued critical_block on step "${step.title}". Default action is full rollback.`,
-            summary: [
-              `Step: ${step.title}`,
-              `Reviewer concern: ${blockerConcern}`,
-              `Reviewer's top issues:`,
-              ...blockerBullets.slice(0, 3).map((b) => `- ${b}`),
-            ].join('\n'),
-            options: [
-              'retry — reviewer is over-cautious; downgrade to needs_revision and let the implementer try again',
-              'abort — issue is genuinely critical; keep the rollback and surface to a human',
-              'change-strategy — keep the rollback but record the suggested next direction',
-            ],
-          });
-          advisorAudits.push(audit);
-          if (reply?.verdict === 'retry') {
-            log.info('advisor downgraded critical_block to needs_revision', {
-              step: step.title,
-              concern: blockerConcern,
-            });
-            for (const issue of reviews[blocker].blocking_issues) {
-              accumulatedFeedback.push(`[${blockerConcern}] ${issue}`);
-            }
-            for (const sugg of reviews[blocker].suggestions.slice(0, 2)) {
-              accumulatedFeedback.push(`[${blockerConcern}] ${sugg}`);
-            }
-            // Other reviewers' feedback still applies.
-            for (let i = 0; i < reviews.length; i++) {
-              if (i === blocker) continue;
-              const r = reviews[i];
-              const tag = REVIEWER_CONCERNS[i];
-              for (const issue of r.blocking_issues) accumulatedFeedback.push(`[${tag}] ${issue}`);
-              for (const sugg of r.suggestions.slice(0, 2)) accumulatedFeedback.push(`[${tag}] ${sugg}`);
-            }
-            continue; // re-enter iter loop with the appended feedback
-          }
-
-          // Circuit Breaker: roll back EVERYTHING and bail.
-          log.warn('critical_block from reviewer; rolling back entire pass', {
-            step: step.title,
-            concern: blockerConcern,
-          });
-          await cheap.restoreActivity({ workdir });
-          record.outcome = 'rolled-back-critical-block';
-          circuitBroken = {
-            step,
-            concern: blockerConcern,
-            bullets: blockerBullets,
-          };
-          stepRecords.push(record);
-          break stepLoop;
-        }
-
-        if (reviews.every((r) => r.verdict === 'ok')) {
-          record.outcome = 'converged';
-          continue stepLoop;
-        }
-
-        // needs_revision → loop with feedback
-        for (let i = 0; i < reviews.length; i++) {
-          const r = reviews[i];
-          const tag = REVIEWER_CONCERNS[i];
-          for (const issue of r.blocking_issues) accumulatedFeedback.push(`[${tag}] ${issue}`);
-          for (const sugg of r.suggestions.slice(0, 2)) accumulatedFeedback.push(`[${tag}] ${sugg}`);
-        }
-      } // end iterLoop
-
-      if (record.outcome === 'dropped-not-converged') {
+      if (result.kind === 'budget-halted') {
+        // Budget ran out mid-step: drop the partial record and stop.
+        break;
+      }
+      if (result.kind === 'circuit-broken') {
+        stepRecords.push(result.record);
+        circuitBroken = result.circuitBroken;
+        break;
+      }
+      // result.kind === 'completed'
+      if (result.record.outcome === 'dropped-not-converged') {
         // Roll back the failed step before moving on.
         const cur = await cheap.statusPorcelainActivity({ workdir });
         const stepFiles = filesFromPorcelain(cur.entries);
@@ -343,8 +165,8 @@ export async function periodicRefactorWorkflow(
           await cheap.restoreActivity({ workdir, paths: stepFiles });
         }
       }
-      stepRecords.push(record);
-    } // end stepLoop
+      stepRecords.push(result.record);
+    }
 
     // ── Phase 3. Handoff ─────────────────────────────────────────────────
     const finalStatus = await cheap.statusPorcelainActivity({ workdir });
