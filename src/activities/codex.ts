@@ -90,8 +90,22 @@ export async function runCodexExec(input: CodexRunInput): Promise<CodexRunOutput
     });
 
     if (res.code !== 0) {
+      const stderrSnippet = res.stderr.slice(0, 1024);
+      // Rate-limit / quota detection. We classify these as `RateLimited`
+      // (retryable) rather than the generic `CodexInvocationError` so the
+      // workflow proxy's RetryPolicy can apply quota-friendly backoff.
+      // Temporal RetryPolicy is single-config (no per-error-type backoff),
+      // but the codex proxies in `proxies.ts` are tuned to wait long enough
+      // that `RateLimited` retries are useful.
+      if (isRateLimit(res.stderr) || isRateLimit(res.stdout)) {
+        throw ApplicationFailure.create({
+          message: `codex hit a rate limit (exit ${res.code}): ${stderrSnippet}`,
+          type: 'RateLimited',
+          details: [res.stdout.slice(0, 2048), res.stderr.slice(0, 2048)],
+        });
+      }
       throw ApplicationFailure.create({
-        message: `codex exited ${res.code}: ${res.stderr.slice(0, 1024)}`,
+        message: `codex exited ${res.code}: ${stderrSnippet}`,
         type: 'CodexInvocationError',
         details: [res.stdout.slice(0, 4096), res.stderr.slice(0, 4096)],
       });
@@ -105,6 +119,27 @@ export async function runCodexExec(input: CodexRunInput): Promise<CodexRunOutput
   } finally {
     await fs.rm(lastMsgDir, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+/**
+ * Heuristic rate-limit detection on codex stderr / stdout. Codex CLI does not
+ * expose a structured error for upstream LLM 429s — the message bubbles up as
+ * free text. We match common phrasings: HTTP 429, "rate limit", "quota", and
+ * the OpenAI-style "rate_limit_exceeded" code. False positives are tolerable
+ * because `RateLimited` is still retryable; false negatives would treat a
+ * 429 as `CodexInvocationError` which the proxy retries far less patiently.
+ */
+function isRateLimit(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return (
+    lower.includes('429') ||
+    lower.includes('rate limit') ||
+    lower.includes('rate_limit') ||
+    lower.includes('rate-limit') ||
+    lower.includes('too many requests') ||
+    lower.includes('quota')
+  );
 }
 
 async function readLastMessage(p: string): Promise<string | undefined> {

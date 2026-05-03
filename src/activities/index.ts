@@ -15,8 +15,15 @@ export * from './github';
 // live in `refactor.ts`.
 export { codexActivity } from './codex';
 export type { CodexInput, CodexOutput } from './codex';
-export { planActivity, implementActivity, reviewActivity } from './refactor';
+export {
+  extractContextArtifactActivity,
+  planActivity,
+  implementActivity,
+  reviewActivity,
+} from './refactor';
 export type {
+  ContextArtifact,
+  ExtractContextInput,
   PlanInput,
   PlanOutput,
   PlanStep,

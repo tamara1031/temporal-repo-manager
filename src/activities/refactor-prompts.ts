@@ -1,7 +1,17 @@
 /**
  * Role-specific prompt templates fed to `codex exec` by `refactor.ts`.
  *
+ * Layout principle — **static-first / dynamic-last** for prompt-cache hits:
+ *   Every role's prompt opens with a frozen block (role identity, hard rules,
+ *   output schema, the workflow-wide ContextArtifact) that is identical across
+ *   sibling activities within a single workflow run. The trailing section
+ *   carries per-call dynamic data (step JSON, prior feedback, diff text).
+ *   LLM provider prompt caches key on prefix, so this layout maximizes hits
+ *   across plan / implement / review activities.
+ *
  * Each prompt covers one role with a tight scope:
+ *  - context: extract a small ContextArtifact (overview / conventions /
+ *    interfaces) from the working tree at workflow init. JSON output.
  *  - planner: pick ONE refactor theme, decompose into 1–2 steps with
  *    [critical] requirements. Read-only.
  *  - implementer: apply ONE step's edits to the working tree. Self-verify
@@ -14,21 +24,79 @@
  * (tests, activities). Workflow code never imports this file directly.
  */
 
-import type { PlanStep, ReviewConcern } from './refactor';
+import type { ContextArtifact, PlanStep, ReviewConcern } from './refactor';
 
-const PLAN_PROMPT = `You are the **Planner**. Identify ONE high-cohesion refactor theme and decompose it into **1 or 2** independently-implementable steps. You must NOT modify any files.
+// ──────────────────────────────────────────────────────────────────────────
+// Static-preamble helpers (identical bytes across plan/implement/review for
+// a given workflow run → cacheable prefix).
+// ──────────────────────────────────────────────────────────────────────────
+
+const STATIC_HARD_RULES = `Global hard rules (apply to every codex invocation in this pipeline):
+- Never run \`git commit\`, \`git push\`, \`git fetch\`, \`git merge\`, \`git stash\`, or \`gh\`. The host Temporal workflow owns those operations.
+- No network calls (curl / wget / npm install / pip install / etc.).
+- No filler / acknowledgments in your final reply. Output ONLY the artifact requested by your role section. Do not write conversational lines like "I'll review this", "Looks good", "Thanks for the diff", or summary lines that restate what you just did.`;
+
+function renderContextArtifact(ctx: ContextArtifact): string {
+  const conventions =
+    ctx.conventions.length === 0
+      ? '- (none recorded)'
+      : ctx.conventions.map((c) => `- ${c}`).join('\n');
+  const interfaces =
+    ctx.interfaces.length === 0 ? '- (none recorded)' : ctx.interfaces.map((i) => `- ${i}`).join('\n');
+  return `## Repository Context Artifact (workflow-wide, frozen)
+Generated at: ${ctx.generatedAt}
+
+### Overview
+${ctx.overview || '(no overview captured)'}
+
+### Coding conventions / invariants
+${conventions}
+
+### Stable interfaces / shared types
+${interfaces}`;
+}
+
+/** Cacheable preamble shared by plan / implement / review. */
+function staticPreamble(ctx: ContextArtifact): string {
+  return `${STATIC_HARD_RULES}
+
+${renderContextArtifact(ctx)}`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Context-extractor prompt (no ContextArtifact — this IS what generates it).
+// ──────────────────────────────────────────────────────────────────────────
+
+const CONTEXT_PROMPT = `You are the **Context Extractor**. You run ONCE at the start of the workflow to distill a small, durable summary of the repository for downstream roles. Read the README, the package manifest (package.json / go.mod / pyproject.toml / Cargo.toml etc.), and 2–4 of the most central modules. Stop reading once you have enough — do not survey the entire tree.
+
+Hard rules:
+- Read-only. Do not modify any files.
+- No network calls. No git, no gh.
+- **No filler.** Do not write "I'll summarize this", "Here's the overview", "Sure, let me extract", or any acknowledgment line. The very first character of your reply MUST be \`{\`. No markdown fences.
+
+Output JSON schema:
+{
+  "overview": string,        // 3–8 sentences: what the repo does, primary language/framework, top-level layout
+  "conventions": [string,...],  // testable invariants the next steps must respect (e.g. "all activities are pure functions", "no top-level side effects in src/", "tests live alongside source as *.test.ts"). 0–8 bullets.
+  "interfaces": [string,...]    // stable signatures or shared types worth knowing (e.g. "Activity I/O is JSON-serializable", "exports from src/activities/index.ts are the worker-registered surface"). 0–8 bullets.
+}
+
+Keep each bullet under ~20 words. The artifact is reused across every subsequent codex call this run, so concision matters more than completeness.`;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Planner prompt
+// ──────────────────────────────────────────────────────────────────────────
+
+const PLAN_STATIC_BODY = `## Role: Planner
+You identify ONE high-cohesion refactor theme and decompose it into **1 or 2** independently-implementable steps. You must NOT modify any files.
 
 Process:
-1. Read the README, the package manifest (package.json / go.mod / pyproject.toml etc.), and the most central modules. Stop reading once you have a theme — do not survey the entire tree.
+1. Use the Context Artifact above as your primary repo summary. Read additional files only when the artifact is insufficient.
 2. Identify ONE theme that delivers real value. Reject "miscellaneous improvements" — high cohesion within the theme is mandatory.
 3. Decompose into **1 or 2** steps (prefer 1; only split when the work genuinely cannot land as one reviewable unit). More steps multiply downstream cost.
 4. For each step, define **at least one** \`critical_requirement\`: a testable success condition tied to system behavior (examples: "all existing unit tests still pass", "no public API surface change", "lint emits zero new warnings", "function X returns identical output for given input").
 
-Hard rules:
-- No file edits. No network calls (curl / wget / npm install / etc.). No git, no gh, no push.
-- Stay terse. The plan is a contract, not an essay.
-
-Output: reply with EXACTLY one JSON object and NOTHING else (no prose, no markdown fences). Schema:
+Output: reply with EXACTLY one JSON object as the very first character of your reply. No prose, no markdown fences, no acknowledgments. Schema:
 {
   "theme": string,
   "rationale": string,
@@ -42,30 +110,22 @@ Output: reply with EXACTLY one JSON object and NOTHING else (no prose, no markdo
 }
 
 If no worthwhile theme exists (repo too small, already optimal, blocked by environment), return:
-{ "theme": "no-op", "rationale": "<why>", "steps": [] }
-`;
+{ "theme": "no-op", "rationale": "<why>", "steps": [] }`;
 
-const IMPLEMENT_PROMPT = (step: PlanStep, priorFeedback: string[]): string => {
-  const stepBlock = JSON.stringify(step, null, 2);
-  const feedbackBlock =
-    priorFeedback.length === 0
-      ? ''
-      : `\nPrior reviewer feedback to address (from earlier iterations on this same step):\n${priorFeedback.map((f) => `- ${f}`).join('\n')}\n`;
-  return `You are the **Implementer**. Apply ONE step's edits to the working tree.
+// ──────────────────────────────────────────────────────────────────────────
+// Implementer prompt
+// ──────────────────────────────────────────────────────────────────────────
 
-Step:
-\`\`\`json
-${stepBlock}
-\`\`\`
-${feedbackBlock}
-Hard rules:
+const IMPLEMENT_STATIC_BODY = `## Role: Implementer
+You apply ONE step's edits to the working tree.
+
+Hard rules (in addition to the global rules above):
 - Edit the working tree only.
-- Do **NOT** run any of: \`git commit\`, \`git push\`, \`git fetch\`, \`git merge\`, \`git stash\`, \`gh\`. The host workflow owns those operations.
 - Stay strictly inside the step's scope. Do not "while you're at it" drift to other improvements — those belong to a future step.
 - Run available test/lint commands to self-verify before reporting (\`npm test\`, \`npm run lint\`, \`tsc --noEmit\`, etc.). Brief retry on flake is fine; do not paper over real failures.
 - If you cannot satisfy a \`critical_requirement\`, say so explicitly. Do not silently weaken or paraphrase it.
 
-Output: reply with a concise markdown report (the workflow stores this verbatim):
+Output: reply with a concise markdown report (the workflow stores this verbatim). Do not preface or summarize.
 
 ## Changed files
 - bullet list of paths
@@ -77,9 +137,11 @@ Output: reply with a concise markdown report (the workflow stores this verbatim)
 - requirement → met / not-met (one-line evidence)
 
 ## Notes
-- anything reviewers should focus on, including any **discretionary fill-ins** (decisions you made beyond the step description)
-`;
-};
+- anything reviewers should focus on, including any **discretionary fill-ins** (decisions you made beyond the step description)`;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Reviewer prompt (parametric on concern)
+// ──────────────────────────────────────────────────────────────────────────
 
 interface ConcernSpec {
   label: string;
@@ -126,30 +188,20 @@ const CONCERN_SPECS: Record<ReviewConcern, ConcernSpec> = {
   },
 };
 
-const REVIEW_PROMPT = (concern: ReviewConcern, step: PlanStep, diff: string): string => {
+function reviewerStaticBody(concern: ReviewConcern): string {
   const spec = CONCERN_SPECS[concern];
-  const stepBlock = JSON.stringify(step, null, 2);
-  return `You are a **Parliament Member** with concern: **${spec.label}**.
+  return `## Role: Parliament Member (concern = ${spec.label})
 
-Step:
-\`\`\`json
-${stepBlock}
-\`\`\`
-
-Diff under review (truncated to fit your context):
-\`\`\`diff
-${diff}
-\`\`\`
-
-Hard rules:
-- Do **NOT** modify any files. Read-only. (The workflow audits drift via post-hoc \`git status --porcelain\` and reverts any reviewer edits.)
+Hard rules (in addition to the global rules above):
+- **READ-ONLY.** Do NOT modify any files. The workflow runs \`git status --porcelain\` after you and reverts any drift you introduce.
 - ${spec.out_of_scope_reminder}
-- Be terse. One bullet per concrete issue.
+- **No filler.** Do not write "I'll review this", "Looks good", "Here's my analysis", or summary lines. The very first character of your reply MUST be \`{\`.
+- One bullet per concrete issue. Do not pad with restatements of the diff.
 
-Concern checklist:
+Concern checklist (your scope, exhaustively):
 ${spec.checklist.map((c) => `- ${c}`).join('\n')}
 
-Output: reply with EXACTLY one JSON object and NOTHING else (no prose, no markdown fences). Schema:
+Output: EXACTLY one JSON object, nothing else. Schema:
 {
   "verdict": "ok" | "needs_revision" | "critical_block",
   "blocking_issues": [string, ...],
@@ -159,16 +211,74 @@ Output: reply with EXACTLY one JSON object and NOTHING else (no prose, no markdo
 Verdict semantics:
 - \`critical_block\`: a genuine showstopper ${spec.critical_examples}. Triggers a full rollback of the entire refactor pass.
 - \`needs_revision\`: non-blocking but real concerns the implementer should address before merge.
-- \`ok\`: nothing of concern from the ${concern} angle for this diff.
-`;
+- \`ok\`: nothing of concern from the ${concern} angle for this diff.`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Composers — static preamble (cacheable) ‖ role-static body ‖ dynamic tail
+// ──────────────────────────────────────────────────────────────────────────
+
+function compose(ctx: ContextArtifact, roleBody: string, dynamicTail: string): string {
+  return `${staticPreamble(ctx)}
+
+${roleBody}
+
+${dynamicTail}`;
+}
+
+const PLAN_PROMPT = (ctx: ContextArtifact, brief?: string): string => {
+  const dynamic = brief?.trim()
+    ? `## Dynamic input (this run)
+Operator brief: ${brief.trim()}`
+    : `## Dynamic input (this run)
+(no operator brief)`;
+  return compose(ctx, PLAN_STATIC_BODY, dynamic);
+};
+
+const IMPLEMENT_PROMPT = (
+  ctx: ContextArtifact,
+  step: PlanStep,
+  priorFeedback: string[],
+): string => {
+  const stepBlock = JSON.stringify(step, null, 2);
+  const feedbackBlock =
+    priorFeedback.length === 0
+      ? '(none — this is the first iteration on this step)'
+      : priorFeedback.map((f) => `- ${f}`).join('\n');
+  const dynamic = `## Dynamic input (this iteration)
+### Step
+\`\`\`json
+${stepBlock}
+\`\`\`
+
+### Prior reviewer feedback to address
+${feedbackBlock}`;
+  return compose(ctx, IMPLEMENT_STATIC_BODY, dynamic);
+};
+
+const REVIEW_PROMPT = (
+  ctx: ContextArtifact,
+  concern: ReviewConcern,
+  step: PlanStep,
+  diff: string,
+): string => {
+  const stepBlock = JSON.stringify(step, null, 2);
+  const dynamic = `## Dynamic input (this iteration)
+### Step
+\`\`\`json
+${stepBlock}
+\`\`\`
+
+### Diff under review (truncated to fit context)
+\`\`\`diff
+${diff}
+\`\`\``;
+  return compose(ctx, reviewerStaticBody(concern), dynamic);
 };
 
 export const PROMPTS = {
-  plan: (brief?: string): string => {
-    const trimmed = brief?.trim();
-    if (!trimmed) return PLAN_PROMPT;
-    return `${PLAN_PROMPT}\nAdditional brief from the operator:\n${trimmed}\n`;
-  },
+  context: (): string => CONTEXT_PROMPT,
+  plan: PLAN_PROMPT,
   implement: IMPLEMENT_PROMPT,
   review: REVIEW_PROMPT,
 };

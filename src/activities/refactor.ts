@@ -19,6 +19,68 @@ import { ApplicationFailure, log } from '@temporalio/activity';
 import { runCodexExec } from './codex';
 import { PROMPTS } from './refactor-prompts';
 
+/**
+ * Repository-level summary distilled once at workflow init. Threaded through
+ * every role prompt as part of the "static" (cacheable) preamble so the LLM
+ * provider's prompt cache hits across plan / implement / review activities
+ * within a single workflow run.
+ */
+export interface ContextArtifact {
+  /** Repo overview: top-level layout, package manifest summary, central modules. */
+  overview: string;
+  /** Coding conventions / invariants / things future steps must respect. Bullets. */
+  conventions: string[];
+  /** Stable interface signatures or shared types worth knowing about. Bullets. */
+  interfaces: string[];
+  /** ISO timestamp the artifact was generated (workflow-deterministic when set by caller). */
+  generatedAt: string;
+}
+
+export interface ExtractContextInput {
+  workdir: string;
+  /** Generated-at timestamp injected by the workflow (Temporal-deterministic). */
+  generatedAt: string;
+  timeoutMs?: number;
+}
+
+const CONTEXT_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Run codex once over the working tree to produce a `ContextArtifact`.
+ * The activity is intentionally cheap and frontloaded — it replaces the
+ * implicit per-role repo re-read each subsequent codex call would otherwise do.
+ */
+export async function extractContextArtifactActivity(
+  input: ExtractContextInput,
+): Promise<ContextArtifact> {
+  const prompt = PROMPTS.context();
+  const res = await runCodexExec({
+    workdir: input.workdir,
+    prompt,
+    timeoutMs: input.timeoutMs ?? CONTEXT_TIMEOUT_MS,
+  });
+  const parsed = parseContextOutput(res.lastMessage);
+  return { ...parsed, generatedAt: input.generatedAt };
+}
+
+function parseContextOutput(text: string): Omit<ContextArtifact, 'generatedAt'> {
+  const json = extractJsonObject(text);
+  if (!json) {
+    log.warn('context-extractor produced unparseable output; falling back to empty artifact', {
+      preview: text.slice(0, 200),
+    });
+    return { overview: text.slice(0, 2000).trim(), conventions: [], interfaces: [] };
+  }
+  const overview = typeof json.overview === 'string' ? json.overview : '';
+  const conventions = Array.isArray(json.conventions)
+    ? (json.conventions as unknown[]).filter((x): x is string => typeof x === 'string')
+    : [];
+  const interfaces = Array.isArray(json.interfaces)
+    ? (json.interfaces as unknown[]).filter((x): x is string => typeof x === 'string')
+    : [];
+  return { overview, conventions, interfaces };
+}
+
 export interface PlanStep {
   title: string;
   description: string;
@@ -33,6 +95,7 @@ export interface PlanOutput {
 
 export interface PlanInput {
   workdir: string;
+  contextArtifact: ContextArtifact;
   brief?: string;
   /** Optional override (default 5 min — within plan proxy's startToCloseTimeout). */
   timeoutMs?: number;
@@ -41,7 +104,7 @@ export interface PlanInput {
 const PLAN_TIMEOUT_MS = 5 * 60 * 1000;
 
 export async function planActivity(input: PlanInput): Promise<PlanOutput> {
-  const prompt = PROMPTS.plan(input.brief);
+  const prompt = PROMPTS.plan(input.contextArtifact, input.brief);
   const res = await runCodexExec({
     workdir: input.workdir,
     prompt,
@@ -53,10 +116,12 @@ export async function planActivity(input: PlanInput): Promise<PlanOutput> {
 function parsePlanOutput(text: string): PlanOutput {
   const json = extractJsonObject(text);
   if (!json) {
+    // PlannerOutputInvalid is in `NON_RETRYABLE` in proxies.ts: a deterministic
+    // bad output won't be fixed by re-running the same prompt, so we let the
+    // workflow's own catch-and-degrade path (`skipped: 'plan-failed'`) handle it.
     throw ApplicationFailure.create({
       message: 'planner did not return a parseable JSON object',
       type: 'PlannerOutputInvalid',
-      nonRetryable: false,
       details: [text.slice(0, 2048)],
     });
   }
@@ -69,7 +134,6 @@ function parsePlanOutput(text: string): PlanOutput {
     throw ApplicationFailure.create({
       message: 'planner output missing required `theme` field',
       type: 'PlannerOutputInvalid',
-      nonRetryable: false,
       details: [text.slice(0, 2048)],
     });
   }
@@ -90,6 +154,7 @@ function normalizeStep(raw: unknown): PlanStep | undefined {
 
 export interface ImplementInput {
   workdir: string;
+  contextArtifact: ContextArtifact;
   step: PlanStep;
   /** Reviewer feedback aggregated from prior iterations of this same step. */
   priorFeedback: string[];
@@ -105,7 +170,7 @@ const IMPLEMENT_TIMEOUT_MS = 30 * 60 * 1000;
 const REPORT_MAX_BYTES = 16 * 1024;
 
 export async function implementActivity(input: ImplementInput): Promise<ImplementOutput> {
-  const prompt = PROMPTS.implement(input.step, input.priorFeedback);
+  const prompt = PROMPTS.implement(input.contextArtifact, input.step, input.priorFeedback);
   const res = await runCodexExec({
     workdir: input.workdir,
     prompt,
@@ -118,6 +183,7 @@ export type ReviewConcern = 'correctness' | 'quality';
 
 export interface ReviewInput {
   workdir: string;
+  contextArtifact: ContextArtifact;
   step: PlanStep;
   /** Diff text to feed the reviewer (already truncated by the workflow). */
   diff: string;
@@ -134,7 +200,7 @@ export interface ReviewOutput {
 const REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
 
 export async function reviewActivity(input: ReviewInput): Promise<ReviewOutput> {
-  const prompt = PROMPTS.review(input.concern, input.step, input.diff);
+  const prompt = PROMPTS.review(input.contextArtifact, input.concern, input.step, input.diff);
   const res = await runCodexExec({
     workdir: input.workdir,
     prompt,

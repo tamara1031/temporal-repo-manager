@@ -8,12 +8,14 @@ import {
 import {
   cheap,
   heavy,
+  contextCodex,
   planCodex,
   implementCodex,
   reviewCodex,
 } from './proxies';
 import { robustPRMergeWorkflow } from './pr-lifecycle';
 import type {
+  ContextArtifact,
   PlanOutput,
   PlanStep,
   ReviewOutput,
@@ -38,10 +40,10 @@ export interface PeriodicRefactorOutput {
 /**
  * Hard cap on codex spawns per periodic run. Mirrors `easy-agent`'s
  * `max_consults` — the orchestrator (this workflow) counts and stops. Worst
- * case at 2 steps × 2 iter × (1 implementer + 2 reviewers) + 1 planner = 13.
- * Cap of 15 leaves a 2-spawn retry buffer.
+ * case is now 1 context-extractor + 1 planner + 2 steps × 2 iter ×
+ * (1 implementer + 2 reviewers) = 14. Cap of 16 leaves a 2-spawn retry buffer.
  */
-const MAX_SPAWNS = 15;
+const MAX_SPAWNS = 16;
 /** Pre-Parliament gate: skip reviewers when (insertions + deletions) AND files are below these. */
 const TRIVIAL_LINE_THRESHOLD = 30;
 const TRIVIAL_FILE_THRESHOLD = 3;
@@ -103,11 +105,27 @@ export async function periodicRefactorWorkflow(
   const spawnCounter = new SpawnCounter(MAX_SPAWNS);
 
   try {
+    // ── Phase 0. Context Artifact ────────────────────────────────────────
+    // One codex call distills a small repo summary that gets folded into the
+    // *static* (cacheable) prefix of every downstream role prompt. This is
+    // the prompt-cache hit lever — plan / implement / review all share the
+    // same prefix bytes within a workflow run.
+    const generatedAt = new Date(workflowInfo().startTime).toISOString();
+    spawnCounter.consume('context', 1);
+    const contextArtifact: ContextArtifact = await contextCodex.extractContextArtifactActivity({
+      workdir,
+      generatedAt,
+    });
+
     // ── Phase 1. Plan ────────────────────────────────────────────────────
     let plan: PlanOutput;
     try {
       spawnCounter.consume('planner', 1);
-      plan = await planCodex.planActivity({ workdir, brief: input.refactorBrief });
+      plan = await planCodex.planActivity({
+        workdir,
+        contextArtifact,
+        brief: input.refactorBrief,
+      });
     } catch (err) {
       log.warn('planner failed; producing plan-failed report', { err: String(err) });
       return { skipped: 'plan-failed' };
@@ -150,6 +168,7 @@ export async function periodicRefactorWorkflow(
         spawnCounter.consume('implementer', 1);
         const implResult = await implementCodex.implementActivity({
           workdir,
+          contextArtifact,
           step,
           priorFeedback: accumulatedFeedback,
         });
@@ -202,6 +221,7 @@ export async function periodicRefactorWorkflow(
           REVIEWER_CONCERNS.map((concern) =>
             reviewCodex.reviewActivity({
               workdir,
+              contextArtifact,
               step,
               diff: diffText.text,
               concern,

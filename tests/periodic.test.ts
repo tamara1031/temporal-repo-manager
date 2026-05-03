@@ -87,6 +87,67 @@ describe('periodicRefactorWorkflow', () => {
     expect(names).toContain('createPRActivity');
   });
 
+  it('extracts the Context Artifact once and threads it to plan/implement/review', async () => {
+    const ctxArtifact = {
+      overview: 'fixture repo overview',
+      conventions: ['fixture-convention-A'],
+      interfaces: ['fixture-interface-X'],
+      generatedAt: '2026-05-03T00:00:00.000Z',
+    };
+    let planSawCtx = false;
+    let implementSawCtx = false;
+    let reviewSawCtx = 0;
+    const { activities, calls } = makeMockActivities({
+      extractContextArtifactActivity: async () => ctxArtifact,
+      planActivity: async (input: any) => {
+        planSawCtx = input?.contextArtifact?.overview === ctxArtifact.overview;
+        return {
+          theme: 'fixture-theme',
+          rationale: 'fixture',
+          steps: [
+            {
+              title: 's',
+              description: 'd',
+              critical_requirements: ['tests still pass'],
+            },
+          ],
+        };
+      },
+      implementActivity: async (input: any) => {
+        implementSawCtx = input?.contextArtifact?.overview === ctxArtifact.overview;
+        return { report: 'ok' };
+      },
+      reviewActivity: async (input: any) => {
+        if (input?.contextArtifact?.overview === ctxArtifact.overview) reviewSawCtx += 1;
+        return { verdict: 'ok' as const, blocking_issues: [], suggestions: [] };
+      },
+    });
+
+    const taskQueue = 'periodic-test-ctx';
+    const worker = await Worker.create({
+      connection: env.nativeConnection,
+      taskQueue,
+      workflowBundle: await getWorkflowBundle(),
+      activities,
+    });
+
+    await worker.runUntil(
+      env.client.workflow.execute(periodicRefactorWorkflow, {
+        taskQueue,
+        workflowId: `periodic-ctx-${randomUUID()}`,
+        args: [{ repoFullName: 'example/repo' }],
+      }),
+    );
+
+    expect(planSawCtx).toBe(true);
+    expect(implementSawCtx).toBe(true);
+    // Two reviewers each receive the artifact.
+    expect(reviewSawCtx).toBe(2);
+    const names = calls.log.map((c) => c.name);
+    // Context extractor runs exactly once per workflow.
+    expect(names.filter((n) => n === 'extractContextArtifactActivity').length).toBe(1);
+  });
+
   it('runs Parliament and merges when diff is non-trivial and reviewers approve', async () => {
     const { activities, calls } = makeMockActivities();
 

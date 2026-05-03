@@ -74,7 +74,14 @@ export function makeMockActivities(
       changedFiles: ['src/foo.ts'],
     })),
     // Refactor-pipeline role activities. Defaults model the happy path: a
-    // 1-step plan, a non-trivial implement diff, both reviewers OK on iter 0.
+    // workflow-init context artifact, a 1-step plan, a non-trivial implement
+    // diff, both reviewers OK on iter 0.
+    extractContextArtifactActivity: record('extractContextArtifactActivity', async () => ({
+      overview: 'stub repo: Temporal-driven refactor pipeline (TypeScript)',
+      conventions: ['activities are pure functions', 'tests live as *.test.ts'],
+      interfaces: ['Activity I/O is JSON-serializable'],
+      generatedAt: '2026-05-03T00:00:00.000Z',
+    })),
     planActivity: record('planActivity', async () => ({
       theme: 'tighten module boundaries',
       rationale: 'reduces inter-module coupling',
