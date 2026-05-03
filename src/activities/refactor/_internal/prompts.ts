@@ -111,7 +111,8 @@ Output: reply with EXACTLY one JSON object as the very first character of your r
     {
       "title": string,
       "description": string,
-      "critical_requirements": [string, ...]
+      "critical_requirements": [string, ...],
+      "target_files": [string, ...]   // repo-relative paths the implementer is expected to modify; omit if unknown
     }
   ]
 }
