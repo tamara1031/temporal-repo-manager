@@ -160,6 +160,16 @@ describe('parsePlanOutput', () => {
     expect(() => parsePlanOutput('Here is my analysis...')).toThrow(
       expect.objectContaining({
         type: ERR_PLANNER_OUTPUT_INVALID,
+        message: expect.stringContaining('did not contain a JSON object'),
+      }),
+    );
+  });
+
+  it('throws PlannerOutputInvalid with an actionable malformed JSON message', () => {
+    expect(() => parsePlanOutput('```json\n{"theme":\n```')).toThrow(
+      expect.objectContaining({
+        type: ERR_PLANNER_OUTPUT_INVALID,
+        message: expect.stringContaining('malformed JSON'),
       }),
     );
   });
@@ -225,7 +235,16 @@ describe('parseReviewOutput', () => {
       parseReviewOutput('I have thoroughly reviewed the code and found no issues.', 'quality'),
     );
     expect(result.verdict).toBe('needs_revision');
-    expect(result.blocking_issues[0]).toContain('reviewer-quality returned non-JSON');
+    expect(result.blocking_issues[0]).toContain('reviewer-quality returned invalid structured output');
+    expect(result.blocking_issues[0]).toContain('did not contain a JSON object');
+  });
+
+  it('coerces malformed JSON to needs_revision with a parse error', async () => {
+    const result = await inActivity(() =>
+      parseReviewOutput('```json\n{"verdict":\n```', 'quality'),
+    );
+    expect(result.verdict).toBe('needs_revision');
+    expect(result.blocking_issues[0]).toContain('malformed JSON');
   });
 });
 
@@ -246,7 +265,8 @@ describe('parsePlanReviewOutput', () => {
       parsePlanReviewOutput('looks fine to me', 'scope'),
     );
     expect(result.verdict).toBe('needs_revision');
-    expect(result.blocking_issues[0]).toContain('plan-reviewer-scope returned non-JSON');
+    expect(result.blocking_issues[0]).toContain('plan-reviewer-scope returned invalid structured output');
+    expect(result.blocking_issues[0]).toContain('did not contain a JSON object');
   });
 });
 
@@ -269,6 +289,14 @@ describe('parseContextOutput', () => {
   it('falls back to raw text overview when codex returns non-JSON', async () => {
     const result = await inActivity(() => parseContextOutput('This is a repo with TypeScript.'));
     expect(result.overview).toContain('This is a repo');
+    expect(result.conventions).toEqual([]);
+    expect(result.interfaces).toEqual([]);
+  });
+
+  it('falls back to an actionable overview when codex returns malformed JSON', async () => {
+    const result = await inActivity(() => parseContextOutput('```json\n{"overview":\n```'));
+    expect(result.overview).toContain('context-extractor returned invalid structured output');
+    expect(result.overview).toContain('malformed JSON');
     expect(result.conventions).toEqual([]);
     expect(result.interfaces).toEqual([]);
   });
