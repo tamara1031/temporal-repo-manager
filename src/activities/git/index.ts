@@ -30,6 +30,9 @@ export type { PorcelainInput, PorcelainOutput } from './status-porcelain';
 export { restoreActivity } from './restore';
 export type { RestoreInput } from './restore';
 
+export { snapshotWorkdirActivity, popWorkdirSnapshotActivity } from './snapshot';
+export type { SnapshotInput, SnapshotOutput } from './snapshot';
+
 // Internal helpers re-exported for activities that need them across the
 // cluster — but NOT re-exported from the activities barrel.
 export {

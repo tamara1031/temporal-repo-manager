@@ -131,6 +131,8 @@ export function makeMockActivities(
       entries: [' M src/foo.ts'],
     })),
     restoreActivity: record('restoreActivity', async () => undefined),
+    snapshotWorkdirActivity: record('snapshotWorkdirActivity', async () => ({ snapped: false })),
+    popWorkdirSnapshotActivity: record('popWorkdirSnapshotActivity', async () => undefined),
   };
 
   const merged: typeof activities = { ...defaults } as unknown as typeof activities;

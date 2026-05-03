@@ -28,6 +28,8 @@ export {
   diffTextActivity,
   statusPorcelainActivity,
   restoreActivity,
+  snapshotWorkdirActivity,
+  popWorkdirSnapshotActivity,
 } from './git';
 export {
   createPRActivity,

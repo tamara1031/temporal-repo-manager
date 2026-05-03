@@ -15,6 +15,16 @@
  *
  * Determinism: only Activity proxies, `log`, and pure helpers are used —
  * safe to call from any workflow file.
+ *
+ * ## Snapshot / rollback invariant
+ *
+ * At the start of every step, `snapshotWorkdirActivity` commits any
+ * accumulated prior-step changes as a temporary checkpoint commit. This makes
+ * full-workdir restores safe: `restoreActivity({ workdir })` only undoes the
+ * current step (the snapshot is HEAD), and `popWorkdirSnapshotActivity`
+ * then un-commits the checkpoint to return prior-step work to the working
+ * tree as unstaged modifications. Every exit path calls either
+ * `restoreAndPop` (rollback) or `keepAndPop` (convergence) exactly once.
  */
 
 import { log } from '@temporalio/workflow';
@@ -24,7 +34,7 @@ import type {
   PlanStep,
   ReviewConcern,
 } from '../../activities/refactor';
-import { arraysEqual, diffPorcelain, filesFromPorcelain } from './porcelain';
+import { arraysEqual, diffPorcelain } from './porcelain';
 import { AdvisorBudget, consultAdvisor, type AdvisorAuditEntry } from './advisor';
 import type { StepRecord } from './refactor-report';
 import type { SpawnCounter } from './spawn-budget';
@@ -55,7 +65,7 @@ export interface StepLoopConfig {
 
 /**
  * Canonical defaults for orchestrators that drive `refactorStepWorkflow`.
- * Lives next to `StepLoopConfig` so the constant and the type stay in sync.
+ * Lives next to `StepLoopConfig` so the constant and the type stays in sync.
  * Callers either pass this directly as `RefactorStepInput.config` or spread
  * it (`{ ...DEFAULT_STEP_LOOP_CONFIG, maxIter: 1 }`) for one-off overrides.
  */
@@ -106,11 +116,24 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
   };
   const accumulatedFeedback: string[] = [];
   let lastDiffSnapshot: { entries: string[] } | undefined;
-  // Baseline taken once before any iteration so rollbacks can scope to only
-  // the files this step touched. Note: if a prior step already modified a
-  // file and this step modifies it further, diffPorcelain won't detect the
-  // additional change (same porcelain line) and that file won't be reverted.
-  const preStepStatus = await cheap.statusPorcelainActivity({ workdir });
+
+  // Commit any accumulated prior-step changes as a checkpoint so that a full
+  // restoreActivity({ workdir }) only undoes THIS step's work (HEAD = snapshot).
+  // popSnap() then un-commits the checkpoint, restoring prior changes to the
+  // working tree. Both helpers are called exactly once on every exit path.
+  const snap = await cheap.snapshotWorkdirActivity({ workdir });
+
+  const popSnap = async () => {
+    if (snap.snapped) {
+      await cheap.popWorkdirSnapshotActivity({ workdir });
+    }
+  };
+
+  // Discard this step's changes and restore the prior-step state.
+  const restoreAndPop = async () => {
+    await cheap.restoreActivity({ workdir }); // resets working tree to HEAD (= snapshot)
+    await popSnap(); // un-commits snapshot → prior changes back as unstaged
+  };
 
   for (let iter = 0; iter < maxIter; iter++) {
     record.iters = iter + 1;
@@ -120,6 +143,8 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
       log.warn('spawn budget would be exceeded by implementer; halting step', {
         step: step.title,
       });
+      // No implementer ran this iter — keep any prior-iter implementer changes.
+      await popSnap();
       return { kind: 'budget-halted' };
     }
     spawnCounter.consume('implementer', 1);
@@ -141,10 +166,7 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
       log.info('no progress between iterations; rolling back this step', {
         step: step.title,
       });
-      const thisStepFiles = diffPorcelain(preStepStatus.entries, postImplStatus.entries);
-      if (thisStepFiles.length > 0) {
-        await cheap.restoreActivity({ workdir, paths: thisStepFiles });
-      }
+      await restoreAndPop();
       record.outcome = 'dropped-no-progress';
       return { kind: 'completed', record };
     }
@@ -163,6 +185,7 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
         skipped: 'trivial-diff',
       });
       record.outcome = 'parliament-skipped';
+      await popSnap();
       return { kind: 'completed', record };
     }
 
@@ -173,6 +196,8 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
         step: step.title,
         remainingBudget,
       });
+      // Implementer ran — keep its changes so they can go into the final PR.
+      await popSnap();
       return { kind: 'budget-halted' };
     }
     spawnCounter.consume('reviewer', reviewerConcerns.length);
@@ -260,12 +285,12 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
         continue; // re-enter iter loop with the appended feedback
       }
 
-      // Circuit Breaker: roll back EVERYTHING and bail.
-      log.warn('critical_block from reviewer; rolling back entire pass', {
+      // Circuit Breaker: roll back this step's changes only, then bail.
+      log.warn('critical_block from reviewer; rolling back this step', {
         step: step.title,
         concern: blockerConcern,
       });
-      await cheap.restoreActivity({ workdir });
+      await restoreAndPop();
       record.outcome = 'rolled-back-critical-block';
       return {
         kind: 'circuit-broken',
@@ -276,6 +301,7 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
 
     if (reviews.every((r) => r.verdict === 'ok')) {
       record.outcome = 'converged';
+      await popSnap();
       return { kind: 'completed', record };
     }
 
@@ -288,7 +314,7 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
     }
   } // end iterLoop
 
-  // Fell through maxIter without convergence — caller will roll back leftover
-  // working-tree changes before moving to the next step.
-  return { kind: 'completed', record };
+  // Fell through maxIter without convergence — roll back this step's changes.
+  await restoreAndPop();
+  return { kind: 'completed', record }; // record.outcome = 'dropped-not-converged'
 }
