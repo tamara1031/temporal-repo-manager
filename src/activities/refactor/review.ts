@@ -1,4 +1,4 @@
-import { runRefactorCodex } from './_internal/codex-runner';
+import { runRefactorActivity } from './_internal/codex-runner';
 import { parseReviewOutput } from './_internal/parsers';
 import { PROMPTS } from './_internal/prompts';
 import type {
@@ -22,11 +22,11 @@ const REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
 
 export async function reviewActivity(input: ReviewInput): Promise<ReviewOutput> {
   const prompt = PROMPTS.review(input.contextArtifact, input.concern, input.step, input.diff);
-  const res = await runRefactorCodex({
+  return runRefactorActivity({
     workdir: input.workdir,
     prompt,
     timeoutMs: input.timeoutMs,
     defaultTimeoutMs: REVIEW_TIMEOUT_MS,
+    mapResult: (res) => parseReviewOutput(res.lastMessage, input.concern),
   });
-  return parseReviewOutput(res.lastMessage, input.concern);
 }

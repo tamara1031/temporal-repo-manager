@@ -1,4 +1,4 @@
-import { runRefactorCodex } from './_internal/codex-runner';
+import { runRefactorActivity } from './_internal/codex-runner';
 import { parsePlanOutput } from './_internal/parsers';
 import { PROMPTS } from './_internal/prompts';
 import type { ContextArtifact, PlanOutput } from './_internal/types';
@@ -15,11 +15,11 @@ const PLAN_TIMEOUT_MS = 5 * 60 * 1000;
 
 export async function planActivity(input: PlanInput): Promise<PlanOutput> {
   const prompt = PROMPTS.plan(input.contextArtifact, input.brief);
-  const res = await runRefactorCodex({
+  return runRefactorActivity({
     workdir: input.workdir,
     prompt,
     timeoutMs: input.timeoutMs,
     defaultTimeoutMs: PLAN_TIMEOUT_MS,
+    mapResult: (res) => parsePlanOutput(res.lastMessage),
   });
-  return parsePlanOutput(res.lastMessage);
 }
