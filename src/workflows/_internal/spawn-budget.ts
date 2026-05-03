@@ -42,7 +42,8 @@ export class SpawnCounter {
   canConsume(n: number): boolean {
     return this.total + n <= this.cap;
   }
-  consume(role: string, n: number): void {
+  /** Record a direct spawn from this workflow. Role is type-checked at compile time. */
+  consume(role: SpawnRole, n: number): void {
     this.counts[role] = (this.counts[role] ?? 0) + n;
     this.total += n;
   }
