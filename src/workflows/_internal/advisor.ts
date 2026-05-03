@@ -41,8 +41,19 @@ export class AdvisorBudget {
   used(): number {
     return this.consumed;
   }
-  cap_(): number {
-    return this.cap;
+  /** Remaining consults available (for passing to a child workflow as its cap). */
+  remaining(): number {
+    return Math.max(0, this.cap - this.consumed);
+  }
+  /**
+   * Apply usage that already happened elsewhere (e.g. inside a child workflow
+   * that ran with a slice of this budget). Unchecked addition: callers must
+   * pass values they got from a trusted accounting source. Used for
+   * cross-workflow budget reconciliation, not as a substitute for tryConsume.
+   */
+  addConsumed(n: number): void {
+    if (n < 0) return;
+    this.consumed += n;
   }
 }
 

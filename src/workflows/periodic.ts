@@ -8,16 +8,13 @@ import {
 } from '@temporalio/workflow';
 import { cheap, heavy, contextCodex, planCodex } from './proxies';
 import { robustPRMergeWorkflow } from './pr-lifecycle';
+import { refactorStepWorkflow } from './refactor-step';
 import type { ContextArtifact, PlanOutput, ReviewConcern } from '../activities/refactor';
 import { filesFromPorcelain } from './_internal/porcelain';
 import { AdvisorBudget, type AdvisorAuditEntry } from './_internal/advisor';
 import { renderReport, type StepRecord } from './_internal/refactor-report';
 import { DEFAULT_PERIODIC_SPAWN_CAP, SpawnCounter } from './_internal/spawn-budget';
-import {
-  runRefactorStep,
-  type CircuitBreaker,
-  type StepLoopConfig,
-} from './_internal/refactor-step-loop';
+import type { CircuitBreaker, StepLoopConfig } from './_internal/refactor-step-loop';
 
 export interface PeriodicRefactorInput {
   repoFullName: string;
@@ -133,39 +130,68 @@ export async function periodicRefactorWorkflow(
     const droppedFromPlan = plan.steps.slice(MAX_STEPS);
 
     // ── Phase 2. Step loop ───────────────────────────────────────────────
+    // Each step runs as its own child workflow (`refactorStepWorkflow`) so the
+    // implement→Parliament loop is reusable from non-periodic orchestrators.
+    // The child receives a slice of our remaining budgets; on return we apply
+    // the deltas back to the parent's counters.
     const stepRecords: StepRecord[] = [];
     let circuitBroken: CircuitBreaker | undefined;
 
-    for (const step of plannedSteps) {
-      const result = await runRefactorStep({
-        step,
-        workdir,
-        contextArtifact,
-        spawnCounter,
-        advisorBudget,
-        advisorAudits,
-        config: STEP_LOOP_CONFIG,
+    for (let stepIndex = 0; stepIndex < plannedSteps.length; stepIndex++) {
+      const step = plannedSteps[stepIndex];
+      // Budget exhausted before we even start the next step — record nothing
+      // (matches the legacy in-process behavior of `break stepLoop` before
+      // the implementer Activity ran).
+      if (spawnCounter.remaining() === 0) {
+        log.warn('parent spawn budget already exhausted; skipping remaining steps', {
+          step: step.title,
+        });
+        break;
+      }
+
+      const childOutput = await executeChild(refactorStepWorkflow, {
+        args: [
+          {
+            step,
+            workdir,
+            contextArtifact,
+            spawnBudget: spawnCounter.remaining(),
+            advisorBudget: advisorBudget.remaining(),
+            config: STEP_LOOP_CONFIG,
+          },
+        ],
+        workflowId: `refactor-step-${info.workflowId}-${stepIndex}`.replace(/:/g, '-'),
       });
 
-      if (result.kind === 'budget-halted') {
-        // Budget ran out mid-step: drop the partial record and stop.
+      // Reconcile child's accounting with parent's budgets.
+      for (const [role, n] of Object.entries(childOutput.spawnCounts)) {
+        spawnCounter.consume(role, n);
+      }
+      advisorBudget.addConsumed(childOutput.advisorConsumed);
+      advisorAudits.push(...childOutput.advisorAudits);
+
+      if (childOutput.kind === 'budget-halted') {
         break;
       }
-      if (result.kind === 'circuit-broken') {
-        stepRecords.push(result.record);
-        circuitBroken = result.circuitBroken;
+      if (childOutput.kind === 'circuit-broken' && childOutput.record) {
+        stepRecords.push(childOutput.record);
+        circuitBroken = childOutput.circuitBroken;
         break;
       }
-      // result.kind === 'completed'
-      if (result.record.outcome === 'dropped-not-converged') {
-        // Roll back the failed step before moving on.
+      // kind === 'completed'
+      if (!childOutput.record) continue; // defensive: shouldn't happen for 'completed'
+      if (childOutput.record.outcome === 'dropped-not-converged') {
+        // Roll back the failed step before moving on. The child only rolls
+        // back the inner working tree on no-progress / critical_block; for
+        // dropped-not-converged we let the parent clean up because it owns
+        // the cross-step view.
         const cur = await cheap.statusPorcelainActivity({ workdir });
         const stepFiles = filesFromPorcelain(cur.entries);
         if (stepFiles.length > 0) {
           await cheap.restoreActivity({ workdir, paths: stepFiles });
         }
       }
-      stepRecords.push(result.record);
+      stepRecords.push(childOutput.record);
     }
 
     // ── Phase 3. Handoff ─────────────────────────────────────────────────
