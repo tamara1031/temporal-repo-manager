@@ -131,70 +131,52 @@ flowchart TB
 
 ### `periodicRefactorWorkflow`
 
+5 フェーズ + ステップループ + finally のフロー。守りどころ（リターン経路 / 巻き戻し /
+finally）だけを残して、ガード判定・ハウスキープ Activity は省略しています。詳細は
+コード（`src/workflows/periodic.ts`）を参照。
+
 ```mermaid
 flowchart TD
-    Start([start]) --> Clone[cloneRepoActivity<br/>heavy]
-    Clone --> Ctx[extractContextArtifactActivity<br/>contextCodex]
-    Ctx --> Plan[planActivity<br/>planCodex]
-    Plan --> NoOp{theme == 'no-op'<br/>or steps == ∅?}
-    NoOp -->|yes| RetNoOp([return<br/>skipped: 'no-op-plan']):::ret
-    NoOp -->|no| Cap[steps = plan.steps<br/>.slice 0, MAX_STEPS=2]
-    Cap --> StepLoop{{for each step}}
+    Start([start]) --> Clone[① clone]
+    Clone --> Ctx[② context]
+    Ctx --> Plan[③ plan]
+    Plan -->|no-op / 空| RetSkip([skipped]):::ret
+    Plan --> StepLoop[④ step loop<br/>≤2 steps × ≤2 iter]
 
-    StepLoop --> IterLoop{{iter 0..MAX_ITER-1<br/>= 0..1}}
-    IterLoop --> BudgetImpl{spawnCounter<br/>can consume 1?}
-    BudgetImpl -->|no| BreakSteps[/break stepLoop/]
-    BudgetImpl -->|yes| Impl[implementActivity<br/>implementCodex]
-    Impl --> Snap[statusPorcelainActivity<br/>cheap]
-    Snap --> Progress{iter &gt; 0 AND<br/>same as last snap?}
-    Progress -->|yes| RestoreStep[restoreActivity<br/>step files]
-    RestoreStep --> MarkDrop[mark<br/>dropped-no-progress]
-    MarkDrop --> NextStep[/continue stepLoop/]
+    subgraph step["per step / per iter"]
+        direction TB
+        Impl[implement] --> Gate{trivial diff?}
+        Gate -->|yes| StepDone[step done]
+        Gate -->|no| Review["parliament<br/>(correctness ‖ quality)"]
+        Review --> Verdict{verdict}
+        Verdict -->|all ok| StepDone
+        Verdict -->|needs_revision| Impl
+        Verdict -->|critical_block| RBall[full restore]
+    end
 
-    Progress -->|no| Stat[diffStatActivity<br/>cheap]
-    Stat --> Trivial{ins+del &lt; 30<br/>AND files &lt; 3?}
-    Trivial -->|yes| MarkSkip[mark<br/>parliament-skipped]
-    MarkSkip --> NextStep
+    StepLoop --> step
+    step -->|loop next step| StepLoop
+    StepLoop --> Final{any changes?}
+    RBall --> Final
+    Final -->|no| RetSkip
+    Final -->|yes| Commit[⑤ commit]
+    Commit --> Child[child:<br/>robustPRMergeWorkflow<br/>ParentClosePolicy=ABANDON]
+    Child --> RetOk([prUrl / merged]):::ret
 
-    Trivial -->|no| BudgetRev{remaining<br/>≥ 2?}
-    BudgetRev -->|no| BreakSteps
-    BudgetRev -->|yes| DiffText[diffTextActivity<br/>cheap, ≤8 KiB]
-    DiffText --> Review[Promise.all -<br/>reviewActivity correctness +<br/>reviewActivity quality<br/>reviewCodex]
-    Review --> DriftSnap[statusPorcelainActivity<br/>drift audit, cheap]
-    DriftSnap --> Drift{drift detected?}
-    Drift -->|yes| RestoreDrift[restoreActivity<br/>drifted files]
-    Drift -->|no| Aggregate
-    RestoreDrift --> Aggregate{verdict?}
-
-    Aggregate -->|any critical_block| RestoreAll[restoreActivity<br/>full restore]
-    RestoreAll --> MarkBlock[mark<br/>rolled-back-critical-block]
-    MarkBlock --> BreakSteps
-    Aggregate -->|all ok| MarkConv[mark converged]
-    MarkConv --> NextStep
-    Aggregate -->|needs_revision| AppendFb[append blocking_issues<br/>+ suggestions to feedback]
-    AppendFb --> IterEnd{iter == MAX_ITER-1?}
-    IterEnd -->|no| IterLoop
-    IterEnd -->|yes| MarkUnConv[mark<br/>dropped-not-converged<br/>restore step files]
-    MarkUnConv --> NextStep
-
-    NextStep --> StepLoop
-    StepLoop -->|all steps done| FinalStatus[statusPorcelainActivity<br/>cheap]
-    BreakSteps --> FinalStatus
-    FinalStatus --> AnyChanges{entries == ∅?}
-    AnyChanges -->|yes| RetNoChg([return<br/>skipped: 'no-changes']):::ret
-    AnyChanges -->|no| Commit[commitAllActivity<br/>heavy]
-    Commit --> Child[executeChild<br/>robustPRMergeWorkflow<br/>parentClosePolicy=ABANDON]
-    Child --> RetOk([return prUrl /<br/>prNumber / merged]):::ret
-
-    RetNoOp -.->|finally| Cleanup
-    RetNoChg -.->|finally| Cleanup
+    RetSkip -.->|finally| Cleanup
     RetOk -.->|finally| Cleanup
-    BreakSteps -.->|finally| Cleanup
-    Cleanup[cleanupWorkspaceActivity<br/>cheap, CancellationScope.nonCancellable]:::finally
+    Cleanup[cleanup workspace<br/>nonCancellable]:::finally
 
     classDef ret fill:#dff,stroke:#06a,color:#024
     classDef finally fill:#fee,stroke:#a00,color:#400
 ```
+
+省略している保守ロジック（ガード）— コードに存在するが図上は隠している:
+
+- 各 codex spawn 前の `SpawnCounter` 残高チェック（超過なら step ループ脱出）
+- iter > 0 で porcelain 出力が前回と完全一致なら「進捗なし」として step を drop
+- Parliament 後の drift audit (`statusPorcelain` 再取得 → 増分があれば `restore`)
+- `iter == MAX_ITER-1` 到達で needs_revision のままなら step を drop（`dropped-not-converged`）
 
 #### Spawn budget
 
