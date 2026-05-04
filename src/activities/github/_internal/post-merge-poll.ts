@@ -1,5 +1,5 @@
 import type { PRLifecycleState } from '../observe-pr-state';
-import { nextPollSleepMs } from './polling-budget';
+import { nextPollSleepMs, normalizePollIntervalMs } from './polling-budget';
 
 export type PostMergeOutcome = 'merged' | 'merge-queued' | 'closed-externally';
 
@@ -32,9 +32,9 @@ export async function pollPostMergeOutcome(
     1,
     Math.floor(input.maxPollAttempts ?? DEFAULT_POST_MERGE_POLL_ATTEMPTS),
   );
-  const intervalMs = Math.max(
-    0,
+  const intervalMs = normalizePollIntervalMs(
     Math.floor(input.pollIntervalMs ?? DEFAULT_POST_MERGE_POLL_INTERVAL_MS),
+    DEFAULT_POST_MERGE_POLL_INTERVAL_MS,
   );
   const configuredWaitMs = attempts * intervalMs;
   const maxActivityWaitMs = Math.max(

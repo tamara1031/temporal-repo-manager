@@ -140,6 +140,34 @@ describe('pollPostMergeOutcome', () => {
     expect(poll.observed()).toBe(3);
     expect(poll.sleeps).toEqual([10, 5]);
   });
+
+  it.each([0, -10])('normalizes %s ms poll intervals before sleeping', async (pollIntervalMs) => {
+    const poll = makePostMergePoll(['OPEN']);
+
+    await expect(
+      pollPostMergeOutcome(
+        { prNumber: 42, maxPollAttempts: 3, pollIntervalMs, maxActivityWaitMs: 2 },
+        poll.deps,
+      ),
+    ).resolves.toBe('merge-queued');
+
+    expect(poll.sleeps).toEqual([2]);
+    expect(poll.sleeps.every((ms) => ms > 0)).toBe(true);
+  });
+
+  it('returns merge-queued without sleeping when the activity-owned wait budget is exhausted', async () => {
+    const poll = makePostMergePoll(['OPEN']);
+
+    await expect(
+      pollPostMergeOutcome(
+        { prNumber: 42, maxPollAttempts: 3, pollIntervalMs: 10, maxActivityWaitMs: 0 },
+        poll.deps,
+      ),
+    ).resolves.toBe('merge-queued');
+
+    expect(poll.observed()).toBe(1);
+    expect(poll.sleeps).toEqual([]);
+  });
 });
 
 describe('pollPRState', () => {
