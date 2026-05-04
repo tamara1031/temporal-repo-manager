@@ -97,6 +97,16 @@ export async function periodicRefactorWorkflow(
     // *static* (cacheable) prefix of every downstream role prompt. This is
     // the prompt-cache hit lever — plan / implement / review all share the
     // same prefix bytes within a workflow run.
+
+    // Recover workdir if the pod was replaced between pushBranchActivity and
+    // here — the first activity boundary a pod restart could hit before any
+    // codex work begins.
+    ({ workdir } = await heavy.ensureWorkdirActivity({
+      workdir,
+      repoFullName: input.repoFullName,
+      branch,
+    }));
+
     const generatedAt = new Date(workflowInfo().startTime).toISOString();
     spawnCounter.consume('context', 1);
     const contextArtifact: ContextArtifact = await contextCodex.extractContextArtifactActivity({

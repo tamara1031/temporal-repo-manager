@@ -30,6 +30,7 @@ import {
   ERR_MISSING_CREDENTIALS,
   ERR_RATE_LIMITED,
   ERR_CODEX_INVOCATION,
+  ERR_WORKDIR_MISSING,
 } from '../../errors';
 
 export interface CodexRunInput {
@@ -84,6 +85,15 @@ async function ensureCodexAuth(): Promise<void> {
  * setting.
  */
 export async function runCodexExec(input: CodexRunInput): Promise<CodexRunOutput> {
+  try {
+    await fs.stat(input.workdir);
+  } catch {
+    throw ApplicationFailure.nonRetryable(
+      `Workdir missing: ${input.workdir}`,
+      ERR_WORKDIR_MISSING,
+    );
+  }
+
   const appServerUrl = process.env.CODEX_APP_SERVER_URL;
   if (appServerUrl) {
     return runCodexAppServer(appServerUrl, input);

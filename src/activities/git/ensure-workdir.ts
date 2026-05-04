@@ -4,7 +4,7 @@ import * as path from 'path';
 import { ApplicationFailure } from '@temporalio/activity';
 import { execOrThrow } from '../_internal/exec';
 import { ERR_MISSING_CREDENTIALS } from '../../errors';
-import { fetchRemoteBranchRefSpec, ghAuthEnv, gitCloneUrl } from './_internal/git-env';
+import { fetchRemoteBranchRefSpec, ghAuthEnv, gitCloneUrl } from './_internal/git-env'; // remoteBranchRef unused: we checkout FETCH_HEAD to avoid DWIM shallow-clone edge cases
 
 export interface EnsureWorkdirInput {
   workdir: string;
@@ -66,7 +66,7 @@ export async function ensureWorkdirActivity(
     ['fetch', '--depth', '50', 'origin', fetchRemoteBranchRefSpec(input.branch)],
     { cwd: workdir, env },
   );
-  await execOrThrow('git', ['checkout', input.branch], { cwd: workdir });
+  await execOrThrow('git', ['checkout', '-b', input.branch, 'FETCH_HEAD'], { cwd: workdir });
 
   return { workdir };
 }
