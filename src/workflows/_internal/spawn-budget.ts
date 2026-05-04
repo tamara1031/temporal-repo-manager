@@ -24,6 +24,18 @@ export type SpawnRole =
   | 'implementer'
   | 'reviewer';
 
+export type SpawnCounts = Partial<Record<SpawnRole, number>>;
+type SerializedSpawnCounts = Readonly<Record<string, number>>;
+
+const SPAWN_ROLES: ReadonlySet<string> = new Set<SpawnRole>([
+  'context',
+  'planner',
+  'plan-reviewer',
+  'plan-refiner',
+  'implementer',
+  'reviewer',
+]);
+
 /**
  * Default spawn cap for `periodicRefactorWorkflow`.
  *
@@ -36,7 +48,7 @@ export type SpawnRole =
 export const DEFAULT_PERIODIC_SPAWN_CAP = 22;
 
 export class SpawnCounter {
-  private readonly counts: Record<string, number> = {};
+  private readonly counts: SpawnCounts = {};
   private total = 0;
   constructor(private readonly cap: number) {
     assertValidCount('cap', cap);
@@ -53,13 +65,16 @@ export class SpawnCounter {
   /**
    * Reconcile spawn counts returned from a child workflow.
    * Validates all entries atomically before applying any: throws RangeError if any
-   * count is invalid (non-integer, negative, NaN, Infinity) or if the total delta
-   * would exceed the remaining cap.
-   * Accepts `Record<string, number>` (not `SpawnRole`) because child workflow
-   * outputs cross a JSON serialization boundary.
+   * role is unknown, count is invalid (non-integer, negative, NaN, Infinity), or
+   * if the total delta would exceed the remaining cap.
+   * Accepts both typed child workflow outputs and string-keyed serialized data
+   * because workflow results cross a JSON serialization boundary.
    */
-  reconcile(spawnCounts: Record<string, number>): void {
-    const entries = Object.entries(spawnCounts);
+  reconcile(spawnCounts: SpawnCounts | SerializedSpawnCounts): void {
+    const entries = Object.entries(spawnCounts).map(([role, n]) => {
+      assertSpawnRole(role);
+      return [role, n] as const;
+    });
     const delta = entries.reduce((sum, [role, n]) => {
       assertValidCount(role, n);
       return sum + n;
@@ -73,7 +88,7 @@ export class SpawnCounter {
   remaining(): number {
     return Math.max(0, this.cap - this.total);
   }
-  summary(): { total: number; cap: number; perRole: Record<string, number> } {
+  summary(): { total: number; cap: number; perRole: SpawnCounts } {
     return { total: this.total, cap: this.cap, perRole: { ...this.counts } };
   }
 
@@ -82,6 +97,12 @@ export class SpawnCounter {
     if (this.total + n > this.cap) {
       throw new RangeError(`spawn budget exceeded: ${this.total + n} > ${this.cap}`);
     }
+  }
+}
+
+function assertSpawnRole(role: string): asserts role is SpawnRole {
+  if (!SPAWN_ROLES.has(role)) {
+    throw new RangeError(`unknown spawn role: ${role}`);
   }
 }
 
