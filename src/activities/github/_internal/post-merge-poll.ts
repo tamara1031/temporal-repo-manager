@@ -15,7 +15,6 @@ export interface PostMergePollOptions {
 
 export interface PostMergePollDeps {
   observe: () => Promise<{ state: PRLifecycleState; mergedAt?: string }>;
-  heartbeat: (details: unknown) => void;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   onTerminalOutcome?: (
@@ -43,9 +42,7 @@ export async function pollPostMergeOutcome(
   );
   const deadlineMs = deps.now() + Math.min(configuredWaitMs, maxActivityWaitMs);
 
-  deps.heartbeat({ phase: 'post-merge', prNumber: input.prNumber, attempt: 0 });
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    deps.heartbeat({ phase: 'post-merge', prNumber: input.prNumber, attempt });
     const observed = await deps.observe();
     const outcome = mapPostMergeStateToOutcome(observed.state, false);
     if (outcome && outcome !== 'merge-queued') {
