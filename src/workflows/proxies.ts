@@ -47,6 +47,38 @@ const codexQuotaFriendlyRetry: RetryPolicy = {
   nonRetryableErrorTypes: [...PROXY_NON_RETRYABLE],
 };
 
+const githubWaitRetry: RetryPolicy = {
+  initialInterval: '15s',
+  backoffCoefficient: 2,
+  maximumInterval: '2 minutes',
+  maximumAttempts: 3,
+  nonRetryableErrorTypes: [...PROXY_NON_RETRYABLE],
+};
+
+type ActivityProxyOptions = Parameters<typeof proxyActivities<typeof activities>>[0];
+
+const activityProxy = (options: ActivityProxyOptions) =>
+  proxyActivities<typeof activities>(options);
+
+const codexProxy = (
+  startToCloseTimeout: ActivityProxyOptions['startToCloseTimeout'],
+  heartbeatTimeout: ActivityProxyOptions['heartbeatTimeout'] = '1 minute',
+) =>
+  activityProxy({
+    startToCloseTimeout,
+    heartbeatTimeout,
+    retry: codexQuotaFriendlyRetry,
+  });
+
+const githubWaitProxy = (
+  startToCloseTimeout: ActivityProxyOptions['startToCloseTimeout'],
+) =>
+  activityProxy({
+    startToCloseTimeout,
+    heartbeatTimeout: '2 minutes',
+    retry: githubWaitRetry,
+  });
+
 /**
  * Per-role codex proxies. Each role has its own startToCloseTimeout because a
  * hung planner / reviewer should not consume an implementer-sized budget.
@@ -56,29 +88,13 @@ const codexQuotaFriendlyRetry: RetryPolicy = {
  * All four LLM proxies share the same `codexQuotaFriendlyRetry` policy so a
  * 429 anywhere in the pipeline backs off rather than failing fast.
  */
-export const contextCodex = proxyActivities<typeof activities>({
-  startToCloseTimeout: '5 minutes',
-  heartbeatTimeout: '1 minute',
-  retry: codexQuotaFriendlyRetry,
-});
+export const contextCodex = codexProxy('5 minutes');
 
-export const planCodex = proxyActivities<typeof activities>({
-  startToCloseTimeout: '5 minutes',
-  heartbeatTimeout: '1 minute',
-  retry: codexQuotaFriendlyRetry,
-});
+export const planCodex = codexProxy('5 minutes');
 
-export const implementCodex = proxyActivities<typeof activities>({
-  startToCloseTimeout: '30 minutes',
-  heartbeatTimeout: '2 minutes',
-  retry: codexQuotaFriendlyRetry,
-});
+export const implementCodex = codexProxy('30 minutes', '2 minutes');
 
-export const reviewCodex = proxyActivities<typeof activities>({
-  startToCloseTimeout: '5 minutes',
-  heartbeatTimeout: '1 minute',
-  retry: codexQuotaFriendlyRetry,
-});
+export const reviewCodex = codexProxy('5 minutes');
 
 /**
  * Generic codex Activity (used by pr-lifecycle for CI self-heal and merge
@@ -86,11 +102,7 @@ export const reviewCodex = proxyActivities<typeof activities>({
  * the legacy orchestrator needed; OK to keep generous since the refactor
  * pipeline no longer routes through this proxy.
  */
-export const heavyCodex = proxyActivities<typeof activities>({
-  startToCloseTimeout: '90 minutes',
-  heartbeatTimeout: '2 minutes',
-  retry: codexQuotaFriendlyRetry,
-});
+export const heavyCodex = codexProxy('90 minutes', '2 minutes');
 
 /**
  * Advisor proxy — single-shot escalation. Tight timeout (the input is
@@ -111,40 +123,10 @@ export const advisor = proxyActivities<typeof activities>({
 });
 
 /** Long-running CI poll. The activity heartbeats; workflow timer is unused. */
-export const ciWait = proxyActivities<typeof activities>({
-  startToCloseTimeout: '70 minutes',
-  heartbeatTimeout: '2 minutes',
-  retry: {
-    initialInterval: '15s',
-    backoffCoefficient: 2,
-    maximumInterval: '2 minutes',
-    maximumAttempts: 3,
-    nonRetryableErrorTypes: [...PROXY_NON_RETRYABLE],
-  },
-});
+export const ciWait = githubWaitProxy('70 minutes');
 
 /** Long-running GitHub PR state poll. The activity heartbeats; workflow timer is unused. */
-export const prStateWait = proxyActivities<typeof activities>({
-  startToCloseTimeout: '70 minutes',
-  heartbeatTimeout: '2 minutes',
-  retry: {
-    initialInterval: '15s',
-    backoffCoefficient: 2,
-    maximumInterval: '2 minutes',
-    maximumAttempts: 3,
-    nonRetryableErrorTypes: [...PROXY_NON_RETRYABLE],
-  },
-});
+export const prStateWait = githubWaitProxy('70 minutes');
 
 /** Focused post-merge poll. The activity heartbeats; workflow timer is unused. */
-export const postMergeWait = proxyActivities<typeof activities>({
-  startToCloseTimeout: '5 minutes',
-  heartbeatTimeout: '2 minutes',
-  retry: {
-    initialInterval: '15s',
-    backoffCoefficient: 2,
-    maximumInterval: '2 minutes',
-    maximumAttempts: 3,
-    nonRetryableErrorTypes: [...PROXY_NON_RETRYABLE],
-  },
-});
+export const postMergeWait = githubWaitProxy('5 minutes');
