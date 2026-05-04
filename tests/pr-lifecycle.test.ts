@@ -220,11 +220,13 @@ describe('robustPRMergeWorkflow', () => {
     expect((result as any).iterations).toBe(1);
 
     const names = calls.log.map((c) => c.name);
-    // After CI failure: fetch logs → codex fix → commit → push → CI again → conflict check → merge.
+    // After CI failure: fetch logs → codex fix → commitAndPush → CI again → conflict check → merge.
     expect(names).toContain('fetchFailedRunLogsActivity');
     expect(names).toContain('codexActivity');
     expect(names.filter((n) => n === 'waitForCIActivity').length).toBe(2);
-    expect(names.filter((n) => n === 'pushBranchActivity').length).toBe(2);
+    // Initial push (setUpstream) + self-heal commitAndPush replace the old commit+push pair.
+    expect(names.filter((n) => n === 'pushBranchActivity').length).toBe(1);
+    expect(names).toContain('commitAndPushActivity');
     expect(names).toContain('mergePRActivity');
   });
 
@@ -250,7 +252,9 @@ describe('robustPRMergeWorkflow', () => {
     const names = calls.log.map((c) => c.name);
     expect(names.filter((n) => n === 'checkConflictActivity').length).toBe(2);
     expect(names).toContain('codexActivity');
-    expect(names.filter((n) => n === 'pushBranchActivity').length).toBe(2);
+    // Initial push (setUpstream) + conflict-resolve commitAndPush replace the old pair.
+    expect(names.filter((n) => n === 'pushBranchActivity').length).toBe(1);
+    expect(names).toContain('commitAndPushActivity');
     expect(names).toContain('mergePRActivity');
   });
 
@@ -261,7 +265,7 @@ describe('robustPRMergeWorkflow', () => {
         failedRunIds: ['1'],
         failedJobNames: ['ci'],
       }),
-      commitAllActivity: async () => ({ committed: false }),
+      commitAndPushActivity: async () => ({ committed: false, pushed: false, sha: 'deadbeef' }),
     });
     expect(result).toBeInstanceOf(WorkflowFailedError);
   });

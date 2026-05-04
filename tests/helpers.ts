@@ -49,6 +49,11 @@ export function makeMockActivities(
       committed: true,
       sha: 'cafebabe',
     })),
+    commitAndPushActivity: record('commitAndPushActivity', async () => ({
+      committed: true,
+      pushed: true,
+      sha: 'cafebabe',
+    })),
     pushBranchActivity: record('pushBranchActivity', async () => undefined),
     checkConflictActivity: record('checkConflictActivity', async () => ({
       hasConflict: false,

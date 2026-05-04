@@ -22,6 +22,7 @@
 export {
   cloneRepoActivity,
   ensureWorkdirActivity,
+  commitAndPushActivity,
   commitAllActivity,
   pushBranchActivity,
   checkConflictActivity,
@@ -50,7 +51,13 @@ export type {
   WaitForPRStateOutput,
   PostMergeOutcome,
 } from './github';
-export type { CheckConflictOutput, EnsureWorkdirInput, EnsureWorkdirOutput } from './git';
+export type {
+  CheckConflictOutput,
+  EnsureWorkdirInput,
+  EnsureWorkdirOutput,
+  CommitAndPushInput,
+  CommitAndPushOutput,
+} from './git';
 export { codexActivity } from './codex';
 export type { CodexInput, CodexOutput } from './codex';
 export { consultAdvisorActivity } from './advisor';

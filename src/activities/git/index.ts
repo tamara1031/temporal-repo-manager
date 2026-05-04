@@ -9,6 +9,9 @@ export type { CloneInput, CloneOutput } from './clone';
 export { ensureWorkdirActivity } from './ensure-workdir';
 export type { EnsureWorkdirInput, EnsureWorkdirOutput } from './ensure-workdir';
 
+export { commitAndPushActivity } from './commit-and-push';
+export type { CommitAndPushInput, CommitAndPushOutput } from './commit-and-push';
+
 export { commitAllActivity } from './commit';
 export type { CommitInput, CommitOutput } from './commit';
 

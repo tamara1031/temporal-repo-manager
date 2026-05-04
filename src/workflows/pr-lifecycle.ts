@@ -401,27 +401,24 @@ interface CommitAndPushContext {
 }
 
 /**
- * Commit the codex-applied fix and push it. When codex produces no diff at
- * all we optionally consult the advisor (if budget permits) for a logged
- * second opinion, then throw `NoFixDiff` — the advisor's verdict is recorded
- * for the operator but does not change the throw, because by then no fix
- * exists to push.
+ * Commit the codex-applied fix and push it atomically.  Uses
+ * `commitAndPushActivity` so that a "commit succeeded, push interrupted"
+ * scenario is detected on retry via the pending-push check rather than
+ * silently discarding the commit.
+ *
+ * `!pushed` is the NoFixDiff signal: if nothing reached GitHub, codex
+ * produced no work and there is nothing to persist.
  */
 async function commitAndPushOrEscalate(ctx: CommitAndPushContext): Promise<void> {
-  const commit = await heavy.commitAllActivity({
+  const result = await heavy.commitAndPushActivity({
     workdir: ctx.workdir,
+    branch: ctx.input.branch,
     message: ctx.commitMessage,
   });
 
-  if (!commit.committed) {
+  if (!result.pushed) {
     await escalateNoDiff(ctx);
-    return;
   }
-
-  await heavy.pushBranchActivity({
-    workdir: ctx.workdir,
-    branch: ctx.input.branch,
-  });
 }
 
 async function escalateNoDiff(ctx: CommitAndPushContext): Promise<never> {
