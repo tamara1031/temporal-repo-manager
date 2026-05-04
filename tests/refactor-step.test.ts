@@ -75,9 +75,9 @@ describe('refactorStepWorkflow', () => {
     const { result, calls } = await runWorkflow('refactor-step-converged', baseInput);
 
     expect(result.kind).toBe('completed');
-    expect(result.record).toBeDefined();
-    expect(result.record?.outcome).toBe('converged');
-    expect(result.circuitBroken).toBeUndefined();
+    if (result.kind !== 'completed') throw new Error(`unexpected kind: ${result.kind}`);
+    expect(result.record.outcome).toBe('converged');
+    // 'completed' variant has no circuitBroken field — enforced by the discriminated union.
 
     // 1 implementer + 2 reviewers (correctness, quality), no advisor consult.
     expect(result.spawnCounts).toEqual({ implementer: 1, reviewer: 2 });
@@ -101,7 +101,8 @@ describe('refactorStepWorkflow', () => {
     });
 
     expect(result.kind).toBe('completed');
-    expect(result.record?.outcome).toBe('parliament-skipped');
+    if (result.kind !== 'completed') throw new Error(`unexpected kind: ${result.kind}`);
+    expect(result.record.outcome).toBe('parliament-skipped');
 
     // Only the implementer ran; no reviewers, no advisor.
     expect(result.spawnCounts).toEqual({ implementer: 1 });
@@ -142,11 +143,10 @@ describe('refactorStepWorkflow', () => {
     );
 
     expect(result.kind).toBe('circuit-broken');
-    expect(result.record).toBeDefined();
-    expect(result.record?.outcome).toBe('rolled-back-critical-block');
-    expect(result.circuitBroken).toBeDefined();
-    expect(result.circuitBroken?.concern).toBe('correctness');
-    expect(result.circuitBroken?.bullets).toContain('credential leak in src/foo.ts');
+    if (result.kind !== 'circuit-broken') throw new Error(`unexpected kind: ${result.kind}`);
+    expect(result.record.outcome).toBe('rolled-back-critical-block');
+    expect(result.circuitBroken.concern).toBe('correctness');
+    expect(result.circuitBroken.bullets).toContain('credential leak in src/foo.ts');
 
     // Reviewer ran, advisor never consulted (budget 0).
     expect(result.advisorConsumed).toBe(0);
@@ -165,9 +165,8 @@ describe('refactorStepWorkflow', () => {
     });
 
     expect(result.kind).toBe('budget-halted');
-    // budget-halted carries no record (caller drops the partial step).
-    expect(result.record).toBeUndefined();
-    expect(result.circuitBroken).toBeUndefined();
+    // The 'budget-halted' variant has no record or circuitBroken — enforced by
+    // the discriminated union type. No runtime assertions needed for absent fields.
 
     expect(result.spawnCounts).toEqual({});
     expect(result.advisorConsumed).toBe(0);
