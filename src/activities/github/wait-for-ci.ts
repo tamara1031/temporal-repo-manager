@@ -4,10 +4,9 @@ import {
   pollCIStatus,
   type PRWithChecks,
 } from './_internal/wait-ci-poll';
-import { ghEnv } from './_internal/gh-env';
 import { invalidGhOutput, isRecord, parseGhJSON } from './_internal/gh-json';
 import { parsePRLifecycleState } from './_internal/pr-state';
-import { withGitHubWaitHeartbeat } from './_internal/wait-heartbeat';
+import { runGitHubWait } from './_internal/wait-heartbeat';
 
 export interface WaitForCIInput {
   repoFullName: string;
@@ -58,11 +57,9 @@ export interface CIResult {
 }
 
 export async function waitForCIActivity(input: WaitForCIInput): Promise<CIResult> {
-  const env = ghEnv();
-
-  return withGitHubWaitHeartbeat(
+  return runGitHubWait(
     { phase: 'wait-ci', prNumber: input.prNumber },
-    async ({ sleep }) => {
+    async ({ env, sleep, now }) => {
       return pollCIStatus(input, {
         observe: async () => {
           const view = await execOrThrow(
@@ -81,7 +78,7 @@ export async function waitForCIActivity(input: WaitForCIInput): Promise<CIResult
           return parsePRWithChecksJSON(view.stdout);
         },
         sleep,
-        now: Date.now,
+        now,
         onExternallyClosed: () => {
           log.info('PR closed externally; exiting CI wait', { pr: input.prNumber });
         },

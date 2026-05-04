@@ -1,8 +1,7 @@
 import { log } from '@temporalio/activity';
-import { ghEnv } from './_internal/gh-env';
 import { pollPostMergeOutcome, type PostMergeOutcome } from './_internal/post-merge-poll';
 import { observePRState } from './_internal/pr-state';
-import { withGitHubWaitHeartbeat } from './_internal/wait-heartbeat';
+import { runGitHubWait } from './_internal/wait-heartbeat';
 
 export interface WaitForPostMergeInput {
   repoFullName: string;
@@ -22,11 +21,9 @@ export { mapPostMergeStateToOutcome } from './_internal/post-merge-poll';
 export async function waitForPostMergeActivity(
   input: WaitForPostMergeInput,
 ): Promise<PostMergeOutcome> {
-  const env = ghEnv();
-
-  const outcome = await withGitHubWaitHeartbeat(
+  const outcome = await runGitHubWait(
     { phase: 'post-merge', prNumber: input.prNumber },
-    async ({ sleep }) => {
+    async ({ env, sleep, now }) => {
       return pollPostMergeOutcome(
         {
           prNumber: input.prNumber,
@@ -38,7 +35,7 @@ export async function waitForPostMergeActivity(
             return observePRState(input.repoFullName, input.prNumber, env);
           },
           sleep,
-          now: Date.now,
+          now,
           onTerminalOutcome: (outcome, observed) => {
             if (outcome === 'merged') {
               log.info('PR merge observed', {
