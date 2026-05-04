@@ -53,15 +53,10 @@ export interface RefactorStepInput {
  */
 export type RefactorStepKind = 'completed' | 'budget-halted' | 'circuit-broken';
 
-export interface RefactorStepOutput {
-  kind: RefactorStepKind;
-  /**
-   * Present when `kind !== 'budget-halted'`. The parent appends this to
-   * its `stepRecords` list.
-   */
-  record?: StepRecord;
-  /** Present when `kind === 'circuit-broken'`. */
-  circuitBroken?: CircuitBreaker;
+/**
+ * Accounting fields present in every variant of `RefactorStepOutput`.
+ */
+interface StepOutputCommon {
   /** Codex spawns this step actually consumed, broken down by role. */
   spawnCounts: SpawnCounts;
   /** Advisor consults this step actually consumed (≤ input.advisorBudget). */
@@ -69,6 +64,22 @@ export interface RefactorStepOutput {
   /** Audit entries from advisor consults made during this step. */
   advisorAudits: AdvisorAuditEntry[];
 }
+
+/**
+ * Discriminated union returned by `refactorStepWorkflow`.
+ *
+ * Each variant carries exactly the fields that are meaningful for its `kind`,
+ * which lets call sites use TypeScript's control-flow narrowing to access
+ * `record` and `circuitBroken` without defensive null checks.
+ *
+ * - `completed`      — step finished; `record` is always present.
+ * - `budget-halted`  — spawn budget exhausted; no record (partial step discarded).
+ * - `circuit-broken` — reviewer critical_block; `record` and `circuitBroken` present.
+ */
+export type RefactorStepOutput =
+  | ({ kind: 'completed'; record: StepRecord } & StepOutputCommon)
+  | ({ kind: 'budget-halted' } & StepOutputCommon)
+  | ({ kind: 'circuit-broken'; record: StepRecord; circuitBroken: CircuitBreaker } & StepOutputCommon);
 
 export async function refactorStepWorkflow(
   input: RefactorStepInput,
