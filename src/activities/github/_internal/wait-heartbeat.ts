@@ -1,5 +1,5 @@
 import { Context } from '@temporalio/activity';
-import { sleepCancellable } from './gh-env';
+import { ghEnv, sleepCancellable } from './gh-env';
 
 /**
  * Background heartbeat cadence for long-running GitHub waits. This is
@@ -18,7 +18,27 @@ export interface GitHubWaitHeartbeatRuntime {
   sleep: (ms: number) => Promise<void>;
 }
 
-export async function withGitHubWaitHeartbeat<T>(
+export interface GitHubWaitRunnerRuntime {
+  env: NodeJS.ProcessEnv;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+}
+
+export async function runGitHubWait<T>(
+  options: GitHubWaitHeartbeatOptions,
+  run: (runtime: GitHubWaitRunnerRuntime) => Promise<T>,
+): Promise<T> {
+  const env = ghEnv();
+  return withGitHubWaitHeartbeat(options, async ({ sleep }) => {
+    return run({
+      env,
+      sleep,
+      now: Date.now,
+    });
+  });
+}
+
+async function withGitHubWaitHeartbeat<T>(
   options: GitHubWaitHeartbeatOptions,
   run: (runtime: GitHubWaitHeartbeatRuntime) => Promise<T>,
 ): Promise<T> {

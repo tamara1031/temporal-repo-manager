@@ -1,8 +1,7 @@
 import { log } from '@temporalio/activity';
-import { ghEnv } from './_internal/gh-env';
 import { observePRState } from './_internal/pr-state';
 import { pollPRState } from './_internal/wait-pr-state-poll';
-import { withGitHubWaitHeartbeat } from './_internal/wait-heartbeat';
+import { runGitHubWait } from './_internal/wait-heartbeat';
 import { type ObservePRStateOutput, type PRLifecycleState } from './observe-pr-state';
 
 export interface WaitForPRStateInput {
@@ -28,15 +27,13 @@ export interface WaitForPRStateOutput extends ObservePRStateOutput {
 export async function waitForPRStateActivity(
   input: WaitForPRStateInput,
 ): Promise<WaitForPRStateOutput> {
-  const env = ghEnv();
-
-  return withGitHubWaitHeartbeat(
+  return runGitHubWait(
     { phase: 'wait-pr-state', prNumber: input.prNumber },
-    async ({ sleep }) => {
+    async ({ env, sleep, now }) => {
       return pollPRState(input, {
         observe: () => observePRState(input.repoFullName, input.prNumber, env),
         sleep,
-        now: Date.now,
+        now,
         onTargetState: (observed) => {
           log.info('Observed target PR state', {
             prNumber: input.prNumber,
