@@ -18,7 +18,7 @@
 import { log } from '@temporalio/workflow';
 import type { ContextArtifact, PlanStep } from '../activities/refactor';
 import { AdvisorBudget, type AdvisorAuditEntry } from './_internal/advisor';
-import { SpawnCounter } from './_internal/spawn-budget';
+import { SpawnCounter, type SpawnCounts } from './_internal/spawn-budget';
 import {
   runRefactorStep,
   type CircuitBreaker,
@@ -62,7 +62,7 @@ export interface RefactorStepOutput {
   /** Present when `kind === 'circuit-broken'`. */
   circuitBroken?: CircuitBreaker;
   /** Codex spawns this step actually consumed, broken down by role. */
-  spawnCounts: Record<string, number>;
+  spawnCounts: SpawnCounts;
   /** Advisor consults this step actually consumed (≤ input.advisorBudget). */
   advisorConsumed: number;
   /** Audit entries from advisor consults made during this step. */

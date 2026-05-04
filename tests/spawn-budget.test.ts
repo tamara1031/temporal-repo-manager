@@ -87,6 +87,19 @@ describe('SpawnCounter', () => {
     });
   });
 
+  it('reconcile rejects unknown child roles atomically without partial application', () => {
+    const counter = new SpawnCounter(4);
+    counter.consume('context', 1);
+
+    expect(() => counter.reconcile({ planner: 1, typo: 1 })).toThrow(RangeError);
+
+    expect(counter.summary()).toEqual({
+      total: 1,
+      cap: 4,
+      perRole: { context: 1 },
+    });
+  });
+
   it('summary returns a snapshot copy, not a live reference', () => {
     const c = new SpawnCounter(10);
     c.consume('planner', 1);
