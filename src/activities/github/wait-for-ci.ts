@@ -1,14 +1,13 @@
-import { Context, log } from '@temporalio/activity';
+import { log } from '@temporalio/activity';
 import { execOrThrow } from '../_internal/exec';
 import {
-  decideCIStatus,
-  evaluateStabilization,
-  parseStatusCheckRollupJSON,
-  type CompletedCIDecision,
-  type RollupSnapshot,
-} from './_internal/ci-rollup';
-import { ghEnv, sleepCancellable } from './_internal/gh-env';
+  pollCIStatus,
+  type PRWithChecks,
+} from './_internal/wait-ci-poll';
+import { ghEnv } from './_internal/gh-env';
 import { invalidGhOutput, isRecord, parseGhJSON } from './_internal/gh-json';
+import { parsePRLifecycleState } from './_internal/pr-state';
+import { withGitHubWaitHeartbeat } from './_internal/wait-heartbeat';
 
 export interface WaitForCIInput {
   repoFullName: string;
@@ -58,109 +57,46 @@ export interface CIResult {
   failedJobNames: string[];
 }
 
-type PRState = 'OPEN' | 'CLOSED' | 'MERGED';
-
-interface PRWithChecks {
-  state: PRState;
-  checksJson: string;
-}
-
-/**
- * Background heartbeat cadence — independent of `pollIntervalSeconds` so that
- * a slow `gh pr view` call or a large `pollIntervalSeconds` can't cause the
- * proxy's `heartbeatTimeout` (2 min) to fire on a still-healthy activity.
- * Half the heartbeat timeout is a safe rule of thumb.
- */
-const HEARTBEAT_TICK_MS = 30 * 1000;
-
 export async function waitForCIActivity(input: WaitForCIInput): Promise<CIResult> {
   const env = ghEnv();
-  const interval = (input.pollIntervalSeconds ?? 30) * 1000;
-  const minStabilizationMs = (input.minSuccessStabilizationSeconds ?? 60) * 1000;
-  const deadline = Date.now() + (input.maxWaitSeconds ?? 60 * 60) * 1000;
-  const ctx = Context.current();
-  let stabilization: RollupSnapshot | undefined;
 
-  // Independent heartbeat ticker. Fires every HEARTBEAT_TICK_MS regardless of
-  // poll progress so cancellation can still be delivered (cancellation arrives
-  // via heartbeat) and the proxy's heartbeatTimeout doesn't trip.
-  let heartbeatRunning = true;
-  ctx.heartbeat({ phase: 'wait-ci', prNumber: input.prNumber });
-  const heartbeatTask = (async () => {
-    while (heartbeatRunning) {
-      try {
-        await sleepCancellable(HEARTBEAT_TICK_MS, ctx.cancellationSignal);
-      } catch {
-        return; // cancellation — stop ticking
-      }
-      if (!heartbeatRunning) return;
-      ctx.heartbeat({ phase: 'wait-ci', prNumber: input.prNumber });
-    }
-  })();
-  // Swallow heartbeat-task errors; the main loop owns activity success/failure.
-  heartbeatTask.catch(() => undefined);
-
-  try {
-    while (Date.now() < deadline) {
-      const view = await execOrThrow(
-        'gh',
-        [
-          'pr',
-          'view',
-          String(input.prNumber),
-          '--repo',
-          input.repoFullName,
-          '--json',
-          'statusCheckRollup,state',
-        ],
-        { env },
-      );
-      const observed = parsePRWithChecks(view.stdout);
-      // External lifecycle wins over CI status: if a human / GitHub closed or
-      // merged the PR we must not push more commits or attempt to self-heal
-      // against a phantom branch.
-      if (observed.state === 'CLOSED') {
-        log.info('PR closed externally; exiting CI wait', { pr: input.prNumber });
-        return { status: 'closed', failedRunIds: [], failedJobNames: [] };
-      }
-      if (observed.state === 'MERGED') {
-        log.info('PR merged externally; exiting CI wait', { pr: input.prNumber });
-        return { status: 'merged', failedRunIds: [], failedJobNames: [] };
-      }
-
-      const checks = parseStatusCheckRollupJSON(observed.checksJson);
-      const decision = decideCIStatus(checks);
-
-      if (decision.status === 'failure') {
-        // Failures are not stabilized — see docstring above.
-        return toCIResult(decision);
-      }
-
-      if (decision.status === 'success') {
-        const stab = evaluateStabilization(stabilization, checks, Date.now(), minStabilizationMs);
-        if (stab.kind === 'settle') {
-          if (checks.length === 0) {
-            log.info('No CI checks observed during stabilization window — treating as success', {
-              pr: input.prNumber,
-              stabilizationSeconds: minStabilizationMs / 1000,
-            });
-          }
-          return toCIResult(decision);
-        }
-        stabilization = stab.next;
-      } else {
-        // pending → reset the stabilization window; we'll start it over the
-        // next time the rollup is fully done and passing.
-        stabilization = undefined;
-      }
-
-      await sleepCancellable(interval, ctx.cancellationSignal);
-    }
-    return { status: 'timeout', failedRunIds: [], failedJobNames: [] };
-  } finally {
-    heartbeatRunning = false;
-    await heartbeatTask.catch(() => undefined);
-  }
+  return withGitHubWaitHeartbeat(
+    { phase: 'wait-ci', prNumber: input.prNumber },
+    async ({ sleep }) => {
+      return pollCIStatus(input, {
+        observe: async () => {
+          const view = await execOrThrow(
+            'gh',
+            [
+              'pr',
+              'view',
+              String(input.prNumber),
+              '--repo',
+              input.repoFullName,
+              '--json',
+              'statusCheckRollup,state',
+            ],
+            { env },
+          );
+          return parsePRWithChecksJSON(view.stdout);
+        },
+        sleep,
+        now: Date.now,
+        onExternallyClosed: () => {
+          log.info('PR closed externally; exiting CI wait', { pr: input.prNumber });
+        },
+        onExternallyMerged: () => {
+          log.info('PR merged externally; exiting CI wait', { pr: input.prNumber });
+        },
+        onNoChecksSettled: (stabilizationSeconds) => {
+          log.info('No CI checks observed during stabilization window — treating as success', {
+            pr: input.prNumber,
+            stabilizationSeconds,
+          });
+        },
+      });
+    },
+  );
 }
 
 /**
@@ -168,27 +104,13 @@ export async function waitForCIActivity(input: WaitForCIInput): Promise<CIResult
  * raw JSON forward into `parseStatusCheckRollupJSON` rather than decoding it
  * twice — keeps the existing helper as the single source of rollup truth.
  */
-function parsePRWithChecks(stdout: string): PRWithChecks {
+export function parsePRWithChecksJSON(stdout: string): PRWithChecks {
   const data = parseGhJSON(stdout, 'gh pr view --json statusCheckRollup,state');
   if (!isRecord(data)) {
     throw invalidGhOutput('gh pr view --json statusCheckRollup,state output must be a JSON object');
   }
-  const stateRaw = data.state;
-  if (stateRaw !== 'OPEN' && stateRaw !== 'CLOSED' && stateRaw !== 'MERGED') {
-    throw invalidGhOutput(
-      `gh pr view returned unexpected state ${JSON.stringify(stateRaw)}; expected OPEN|CLOSED|MERGED`,
-    );
-  }
   return {
-    state: stateRaw,
+    state: parsePRLifecycleState(data.state),
     checksJson: JSON.stringify({ statusCheckRollup: data.statusCheckRollup ?? [] }),
-  };
-}
-
-function toCIResult(decision: CompletedCIDecision): CIResult {
-  return {
-    status: decision.status,
-    failedRunIds: decision.failedRunIds,
-    failedJobNames: decision.failedJobNames,
   };
 }

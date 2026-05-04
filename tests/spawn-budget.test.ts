@@ -14,6 +14,13 @@ describe('SpawnCounter', () => {
     expect(c.canConsume(6)).toBe(false);
   });
 
+  it('canConsume rejects non-integers and negatives', () => {
+    const c = new SpawnCounter(10);
+    expect(c.canConsume(-1)).toBe(false);
+    expect(c.canConsume(1.5)).toBe(false);
+    expect(c.canConsume(Number.NaN)).toBe(false);
+  });
+
   it('consume tracks by role and reduces remaining', () => {
     const c = new SpawnCounter(10);
     c.consume('planner', 1);
@@ -30,41 +37,54 @@ describe('SpawnCounter', () => {
     expect(c.summary().perRole['reviewer']).toBe(5);
   });
 
-  it('canConsume returns false after budget is exhausted', () => {
-    const c = new SpawnCounter(3);
-    c.consume('planner', 3);
-    expect(c.canConsume(1)).toBe(false);
-    expect(c.remaining()).toBe(0);
+  it('consume rejects invalid counts without changing totals', () => {
+    const counter = new SpawnCounter(3);
+    counter.consume('context', 1);
+
+    expect(() => counter.consume('implementer', -1)).toThrow(RangeError);
+    expect(() => counter.consume('implementer', Number.NaN)).toThrow(RangeError);
+    expect(() => counter.consume('implementer', Number.POSITIVE_INFINITY)).toThrow(RangeError);
+    expect(() => counter.consume('implementer', 3)).toThrow(RangeError);
+
+    expect(counter.summary()).toEqual({
+      total: 1,
+      cap: 3,
+      perRole: { context: 1 },
+    });
   });
 
-  it('remaining never goes below zero even after over-consumption via merge', () => {
-    const c = new SpawnCounter(2);
-    c.merge({ implementer: 5 });
-    expect(c.remaining()).toBe(0);
+  it('reconcile applies valid child spawn counts into the per-role summary', () => {
+    const counter = new SpawnCounter(6);
+    counter.consume('context', 1);
+
+    counter.reconcile({ planner: 1, 'plan-reviewer': 2 });
+    counter.reconcile({ implementer: 1, reviewer: 1 });
+
+    expect(counter.summary()).toEqual({
+      total: 6,
+      cap: 6,
+      perRole: {
+        context: 1,
+        planner: 1,
+        'plan-reviewer': 2,
+        implementer: 1,
+        reviewer: 1,
+      },
+    });
   });
 
-  it('merge reconciles child counts without checking the cap', () => {
-    const parent = new SpawnCounter(10);
-    parent.consume('context', 1);
-    parent.merge({ planner: 2, 'plan-reviewer': 1 });
-    expect(parent.remaining()).toBe(6);
-    expect(parent.summary().perRole).toEqual({ context: 1, planner: 2, 'plan-reviewer': 1 });
-  });
+  it('reconcile rejects invalid child counts atomically without partial application', () => {
+    const counter = new SpawnCounter(4);
+    counter.consume('context', 1);
 
-  it('merge accumulates into existing role counts', () => {
-    const parent = new SpawnCounter(10);
-    parent.consume('implementer', 2);
-    parent.merge({ implementer: 1, reviewer: 3 });
-    expect(parent.summary().perRole['implementer']).toBe(3);
-    expect(parent.summary().perRole['reviewer']).toBe(3);
-    expect(parent.summary().total).toBe(6);
-  });
+    expect(() => counter.reconcile({ planner: 1, reviewer: Number.NaN })).toThrow(RangeError);
+    expect(() => counter.reconcile({ planner: 1, reviewer: 3 })).toThrow(RangeError);
 
-  it('merge silently skips entries with n <= 0', () => {
-    const parent = new SpawnCounter(10);
-    parent.merge({ planner: 0, implementer: -1, reviewer: 2 });
-    expect(parent.summary().perRole).toEqual({ reviewer: 2 });
-    expect(parent.summary().total).toBe(2);
+    expect(counter.summary()).toEqual({
+      total: 1,
+      cap: 4,
+      perRole: { context: 1 },
+    });
   });
 
   it('summary returns a snapshot copy, not a live reference', () => {

@@ -19,6 +19,7 @@ import { log } from '@temporalio/workflow';
 import { planCodex } from '../proxies';
 import type { ContextArtifact, DesignPhaseRecord, DesignRound, PlanOutput, PlanReviewConcern, PlanStep } from '../../activities/refactor';
 import type { SpawnCounter } from './spawn-budget';
+import { collectFeedback } from './feedback';
 
 // ──────────────────────────────────────────────────────────────────────────
 // Structural equality helpers for PlanOutput
@@ -40,6 +41,16 @@ function stepsEqual(a: readonly PlanStep[], b: readonly PlanStep[]): boolean {
     if (ra.length !== rb.length) return false;
     for (let j = 0; j < ra.length; j++) {
       if (ra[j] !== rb[j]) return false;
+    }
+    const ta = sa.target_files;
+    const tb = sb.target_files;
+    if (ta === undefined || tb === undefined) {
+      if (ta !== tb) return false;
+    } else {
+      if (ta.length !== tb.length) return false;
+      for (let j = 0; j < ta.length; j++) {
+        if (ta[j] !== tb[j]) return false;
+      }
     }
   }
   return true;
@@ -141,13 +152,7 @@ export async function runDesignPhase(input: DesignPhaseLoopInput): Promise<Desig
       break;
     }
 
-    const feedback: string[] = [];
-    for (let i = 0; i < reviews.length; i++) {
-      const r = reviews[i];
-      const tag = reviewerConcerns[i];
-      for (const issue of r.blocking_issues) feedback.push(`[${tag}] ${issue}`);
-      for (const sugg of r.suggestions.slice(0, 2)) feedback.push(`[${tag}] ${sugg}`);
-    }
+    const feedback = collectFeedback(reviews, reviewerConcerns);
 
     if (!spawnCounter.canConsume(1)) {
       log.warn('design spawn budget too low for plan refiner; accepting current plan', { iter });

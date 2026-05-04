@@ -38,34 +38,55 @@ export const DEFAULT_PERIODIC_SPAWN_CAP = 22;
 export class SpawnCounter {
   private readonly counts: Record<string, number> = {};
   private total = 0;
-  constructor(private readonly cap: number) {}
+  constructor(private readonly cap: number) {
+    assertValidCount('cap', cap);
+  }
   canConsume(n: number): boolean {
-    return this.total + n <= this.cap;
+    return Number.isInteger(n) && n >= 0 && this.total + n <= this.cap;
   }
   /** Record a direct spawn from this workflow. Role is type-checked at compile time. */
   consume(role: SpawnRole, n: number): void {
+    this.assertCanConsume(n);
     this.counts[role] = (this.counts[role] ?? 0) + n;
     this.total += n;
   }
   /**
    * Reconcile spawn counts returned from a child workflow.
+   * Validates all entries atomically before applying any: throws RangeError if any
+   * count is invalid (non-integer, negative, NaN, Infinity) or if the total delta
+   * would exceed the remaining cap.
    * Accepts `Record<string, number>` (not `SpawnRole`) because child workflow
-   * outputs are plain JSON — compile-time enforcement is not possible across
-   * the serialization boundary. Does NOT check the cap; this records what
-   * already happened inside the child.
+   * outputs cross a JSON serialization boundary.
    */
-  merge(counts: Record<string, number>): void {
-    for (const [role, n] of Object.entries(counts)) {
-      if (n > 0) {
-        this.counts[role] = (this.counts[role] ?? 0) + n;
-        this.total += n;
-      }
+  reconcile(spawnCounts: Record<string, number>): void {
+    const entries = Object.entries(spawnCounts);
+    const delta = entries.reduce((sum, [role, n]) => {
+      assertValidCount(role, n);
+      return sum + n;
+    }, 0);
+    this.assertCanConsume(delta);
+    for (const [role, n] of entries) {
+      this.counts[role] = (this.counts[role] ?? 0) + n;
     }
+    this.total += delta;
   }
   remaining(): number {
     return Math.max(0, this.cap - this.total);
   }
   summary(): { total: number; cap: number; perRole: Record<string, number> } {
     return { total: this.total, cap: this.cap, perRole: { ...this.counts } };
+  }
+
+  private assertCanConsume(n: number): void {
+    assertValidCount('spawn count', n);
+    if (this.total + n > this.cap) {
+      throw new RangeError(`spawn budget exceeded: ${this.total + n} > ${this.cap}`);
+    }
+  }
+}
+
+function assertValidCount(label: string, n: number): void {
+  if (!Number.isInteger(n) || n < 0) {
+    throw new RangeError(`${label} must be a non-negative finite integer`);
   }
 }

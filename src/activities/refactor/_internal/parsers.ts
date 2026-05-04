@@ -5,18 +5,24 @@
  */
 
 import { ApplicationFailure, log } from '@temporalio/activity';
-import { extractJsonObject } from '../../_internal/json-extract';
+import { extractJsonObjectResult } from '../../_internal/json-extract';
 import { ERR_PLANNER_OUTPUT_INVALID } from '../../../errors';
 import type { ContextArtifact, PlanOutput, PlanStep, PlanReviewConcern, PlanReviewOutput, ReviewConcern, ReviewOutput } from './types';
 
 export function parseContextOutput(text: string): Omit<ContextArtifact, 'generatedAt'> {
-  const json = extractJsonObject(text);
-  if (!json) {
+  const extracted = extractJsonObjectResult(text);
+  if (!extracted.ok) {
     log.warn('context-extractor produced unparseable output; falling back to empty artifact', {
       preview: text.slice(0, 200),
+      reason: extracted.message,
     });
-    return { overview: text.slice(0, 2000).trim(), conventions: [], interfaces: [] };
+    const overview =
+      extracted.kind === 'malformed-json' || extracted.kind === 'non-object-json'
+        ? `context-extractor returned invalid structured output: ${extracted.message}`
+        : text.slice(0, 2000).trim();
+    return { overview, conventions: [], interfaces: [] };
   }
+  const json = extracted.value;
   const overview = typeof json.overview === 'string' ? json.overview : '';
   const conventions = Array.isArray(json.conventions)
     ? (json.conventions as unknown[]).filter((x): x is string => typeof x === 'string')
@@ -28,28 +34,21 @@ export function parseContextOutput(text: string): Omit<ContextArtifact, 'generat
 }
 
 export function parsePlanOutput(text: string): PlanOutput {
-  const json = extractJsonObject(text);
-  if (!json) {
+  const extracted = extractJsonObjectResult(text);
+  if (!extracted.ok) {
     // PlannerOutputInvalid is in `NON_RETRYABLE` in proxies.ts: a deterministic
     // bad output won't be fixed by re-running the same prompt, so we let the
     // workflow's own catch-and-degrade path (`skipped: 'plan-failed'`) handle it.
-    throw ApplicationFailure.create({
-      message: 'planner did not return a parseable JSON object',
-      type: ERR_PLANNER_OUTPUT_INVALID,
-      details: [text.slice(0, 2048)],
-    });
+    throw invalidPlanOutput(`planner did not return a parseable JSON object: ${extracted.message}`, text);
   }
+  const json = extracted.value;
   const theme = typeof json.theme === 'string' ? json.theme : '';
   const rationale = typeof json.rationale === 'string' ? json.rationale : '';
   const steps = Array.isArray(json.steps)
     ? (json.steps as unknown[]).map(normalizeStep).filter((s): s is PlanStep => s !== undefined)
     : [];
   if (!theme) {
-    throw ApplicationFailure.create({
-      message: 'planner output missing required `theme` field',
-      type: ERR_PLANNER_OUTPUT_INVALID,
-      details: [text.slice(0, 2048)],
-    });
+    throw invalidPlanOutput('planner output missing required `theme` field', text);
   }
   return { theme, rationale, steps };
 }
@@ -70,17 +69,19 @@ function normalizeStep(raw: unknown): PlanStep | undefined {
 }
 
 export function parsePlanReviewOutput(text: string, concern: PlanReviewConcern): PlanReviewOutput {
-  const json = extractJsonObject(text);
-  if (!json) {
+  const extracted = extractJsonObjectResult(text);
+  if (!extracted.ok) {
     log.warn(`plan-reviewer-${concern} produced unparseable output; coercing to needs_revision`, {
       preview: text.slice(0, 200),
+      reason: extracted.message,
     });
     return {
       verdict: 'needs_revision',
-      blocking_issues: [`plan-reviewer-${concern} returned non-JSON: ${text.slice(0, 200)}`],
+      blocking_issues: [`plan-reviewer-${concern} returned invalid structured output: ${extracted.message}`],
       suggestions: [],
     };
   }
+  const json = extracted.value;
   const verdict = ((): PlanReviewOutput['verdict'] => {
     const v = json.verdict;
     if (v === 'ok' || v === 'needs_revision') return v;
@@ -96,17 +97,19 @@ export function parsePlanReviewOutput(text: string, concern: PlanReviewConcern):
 }
 
 export function parseReviewOutput(text: string, concern: ReviewConcern): ReviewOutput {
-  const json = extractJsonObject(text);
-  if (!json) {
+  const extracted = extractJsonObjectResult(text);
+  if (!extracted.ok) {
     log.warn(`reviewer-${concern} produced unparseable output; pseudo-coercing to needs_revision`, {
       preview: text.slice(0, 200),
+      reason: extracted.message,
     });
     return {
       verdict: 'needs_revision',
-      blocking_issues: [`reviewer-${concern} returned non-JSON: ${text.slice(0, 200)}`],
+      blocking_issues: [`reviewer-${concern} returned invalid structured output: ${extracted.message}`],
       suggestions: [],
     };
   }
+  const json = extracted.value;
   const verdict = ((): ReviewOutput['verdict'] => {
     const v = json.verdict;
     if (v === 'ok' || v === 'needs_revision' || v === 'critical_block') return v;
@@ -119,4 +122,12 @@ export function parseReviewOutput(text: string, concern: ReviewConcern): ReviewO
     ? (json.suggestions as unknown[]).filter((x): x is string => typeof x === 'string')
     : [];
   return { verdict, blocking_issues: blocking, suggestions };
+}
+
+function invalidPlanOutput(message: string, text: string): ApplicationFailure {
+  return ApplicationFailure.create({
+    message,
+    type: ERR_PLANNER_OUTPUT_INVALID,
+    details: [text.slice(0, 2048)],
+  });
 }

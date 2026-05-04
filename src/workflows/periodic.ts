@@ -115,7 +115,7 @@ export async function periodicRefactorWorkflow(
       ],
       workflowId: `design-phase-${info.workflowId}`.replace(/:/g, '-'),
     });
-    spawnCounter.merge(designOutput.spawnCounts);
+    spawnCounter.reconcile(designOutput.spawnCounts);
 
     if (designOutput.outcome === 'plan-failed' || designOutput.outcome === 'budget-exhausted') {
       log.warn('design phase failed; skipping refactor', { outcome: designOutput.outcome });
@@ -165,7 +165,7 @@ export async function periodicRefactorWorkflow(
       });
 
       // Reconcile child's accounting with parent's budgets.
-      spawnCounter.merge(childOutput.spawnCounts);
+      spawnCounter.reconcile(childOutput.spawnCounts);
       advisorBudget.addConsumed(childOutput.advisorConsumed);
       advisorAudits.push(...childOutput.advisorAudits);
 
@@ -251,4 +251,3 @@ export async function periodicRefactorWorkflow(
     });
   }
 }
-
