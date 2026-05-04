@@ -2,7 +2,8 @@
  * Activity mock factory + shared workflow bundle for tests.
  */
 import * as path from 'path';
-import { bundleWorkflowCode, type WorkflowBundleWithSourceMap } from '@temporalio/worker';
+import type { TestWorkflowEnvironment } from '@temporalio/testing';
+import { Worker, bundleWorkflowCode, type WorkflowBundleWithSourceMap } from '@temporalio/worker';
 import type * as activities from '../src/activities';
 
 let bundlePromise: Promise<WorkflowBundleWithSourceMap> | undefined;
@@ -22,6 +23,55 @@ export function getWorkflowBundle(): Promise<WorkflowBundleWithSourceMap> {
 
 export interface ActivityCalls {
   log: Array<{ name: string; args: unknown[] }>;
+}
+
+type TestWorkflow = (...args: any[]) => Promise<any>;
+export type MockActivityOverrides = Partial<typeof activities>;
+
+export interface RunWorkflowWithMocksOptions<TWorkflow extends TestWorkflow> {
+  env: TestWorkflowEnvironment;
+  taskQueue: string;
+  workflow: TWorkflow;
+  workflowId: string;
+  args: Parameters<TWorkflow>;
+  activityOverrides?: MockActivityOverrides;
+  catchErrors?: boolean;
+}
+
+export async function runWorkflowWithMocks<TWorkflow extends TestWorkflow>(
+  options: RunWorkflowWithMocksOptions<TWorkflow> & { catchErrors: true },
+): Promise<{ result: Awaited<ReturnType<TWorkflow>> | unknown; calls: ActivityCalls }>;
+export async function runWorkflowWithMocks<TWorkflow extends TestWorkflow>(
+  options: RunWorkflowWithMocksOptions<TWorkflow> & { catchErrors?: false },
+): Promise<{ result: Awaited<ReturnType<TWorkflow>>; calls: ActivityCalls }>;
+export async function runWorkflowWithMocks<TWorkflow extends TestWorkflow>({
+  env,
+  taskQueue,
+  workflow,
+  workflowId,
+  args,
+  activityOverrides,
+  catchErrors = false,
+}: RunWorkflowWithMocksOptions<TWorkflow>): Promise<{
+  result: Awaited<ReturnType<TWorkflow>> | unknown;
+  calls: ActivityCalls;
+}> {
+  const { activities: mockActivities, calls } = makeMockActivities(activityOverrides);
+  const worker = await Worker.create({
+    connection: env.nativeConnection,
+    taskQueue,
+    workflowBundle: await getWorkflowBundle(),
+    activities: mockActivities,
+  });
+  const execution = env.client.workflow.execute(workflow, {
+    taskQueue,
+    workflowId,
+    args,
+  });
+  const result = catchErrors
+    ? await worker.runUntil(execution).catch((err: unknown) => err)
+    : await worker.runUntil(execution);
+  return { result, calls };
 }
 
 export function makeMockActivities(
