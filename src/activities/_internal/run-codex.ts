@@ -1,14 +1,22 @@
 /**
- * Low-level `codex exec` runner shared by every codex activity.
+ * Low-level codex runner shared by every codex activity.
  *
  * This is intentionally NOT a Temporal Activity itself — each role (planner /
  * implementer / reviewer / context extractor / generic single-shot) is its own
  * Activity so the Temporal UI shows one event per role and per-role retries /
  * timeouts are independent.
  *
- * Authentication: codex finds its credentials at `~/.codex/auth.json` (or
- * `$CODEX_HOME/auth.json`). On a Worker pod, mount the file produced by
- * `codex login` as a Secret. No OPENAI_API_KEY is required.
+ * ## Transport selection
+ *
+ * When `CODEX_APP_SERVER_URL` is set (e.g. `ws://127.0.0.1:8765`), requests
+ * are routed to the `codex app-server` sidecar container via WebSocket
+ * JSON-RPC 2.0.  Authentication is handled by the sidecar — auth.json must
+ * be mounted there, not in the worker container.
+ *
+ * When `CODEX_APP_SERVER_URL` is unset, the legacy `codex exec` subprocess
+ * path is used.  Authentication: codex finds its credentials at
+ * `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`).  Mount the file
+ * produced by `codex login` as a Secret on the worker pod.
  */
 
 import { ApplicationFailure } from '@temporalio/activity';
@@ -16,6 +24,7 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import { execCommand } from './exec';
+import { runCodexAppServer } from './run-codex-app-server';
 import {
   ERR_MISSING_CREDENTIALS,
   ERR_RATE_LIMITED,
@@ -74,6 +83,11 @@ async function ensureCodexAuth(): Promise<void> {
  * setting.
  */
 export async function runCodexExec(input: CodexRunInput): Promise<CodexRunOutput> {
+  const appServerUrl = process.env.CODEX_APP_SERVER_URL;
+  if (appServerUrl) {
+    return runCodexAppServer(appServerUrl, input);
+  }
+
   await ensureCodexAuth();
 
   const lastMsgDir = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-last-msg-'));

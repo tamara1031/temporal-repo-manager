@@ -32,6 +32,30 @@ services:
       retries: 30
       start_period: 5s
 
+  # codex app-server sidecar.  Shares the workspaces volume with the worker.
+  # Auth is mounted here (not in the worker) because only the sidecar invokes
+  # the codex CLI.  The worker reaches this container at ws://codex-app-server:8765
+  # (set via CODEX_APP_SERVER_URL).
+  codex-app-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: temporal-repo-steward:dev
+    container_name: agent-codex-app-server
+    command: ["codex", "app-server", "--listen", "ws://0.0.0.0:8765"]
+    environment:
+      HOME: /home/agent
+    volumes:
+      - ${HOME}/.codex/auth.json:/home/agent/.codex/auth.json:ro
+      - workspaces:/workspaces
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8765/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
   worker:
     build:
       context: .
@@ -41,6 +65,8 @@ services:
     depends_on:
       temporal:
         condition: service_healthy
+      codex-app-server:
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -49,17 +75,11 @@ services:
       TEMPORAL_TASK_QUEUE: repo-steward
       TEMPORAL_TLS: "false"
       HOME: /home/agent
+      # Route all codex calls to the app-server sidecar.
+      CODEX_APP_SERVER_URL: ws://codex-app-server:8765
     volumes:
-      # codex login で生成された auth.json を read-only マウント
-      - ${HOME}/.codex/auth.json:/home/agent/.codex/auth.json:ro
       # workdir 用の永続ボリューム（コンテナ再起動でも消えない）
       - workspaces:/workspaces
-    # Codex の bubblewrap サンドボックス（--sandbox workspace-write 等）は非特権
-    # user namespace 作成を必要とする。Docker のデフォルト seccomp プロファイルが
-    # `unshare(CLONE_NEWUSER)` を遮断するため、bwrap を有効化したい場合のみ
-    # seccomp=unconfined にする。bypass フラグ運用なら無くても良い。
-    security_opt:
-      - seccomp=unconfined
     restart: unless-stopped
 
 volumes:

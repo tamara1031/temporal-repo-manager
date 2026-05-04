@@ -75,7 +75,12 @@ COPY package.json ./
 
 # Codex CLI is invoked once per role from `src/activities/refactor.ts` with
 # inline prompts — there are no codex subagent TOMLs to bake into the image.
-# (Auth lives at $HOME/.codex/auth.json, mounted at runtime as a Secret.)
+#
+# Transport modes (set via CODEX_APP_SERVER_URL):
+#   - App-server (K8s default): a co-located sidecar runs `codex app-server`;
+#     auth.json is mounted in the SIDECAR, not here.
+#   - Subprocess fallback (local/dev): codex exec is spawned directly;
+#     auth.json must be mounted at $HOME/.codex/auth.json in this container.
 
 USER agent
 WORKDIR /app
