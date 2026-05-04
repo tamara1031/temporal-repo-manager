@@ -97,7 +97,6 @@ describe('pollPostMergeOutcome', () => {
 
     expect(poll.observed()).toBe(2);
     expect(poll.sleeps).toEqual([10]);
-    expect(poll.heartbeats.length).toBeGreaterThanOrEqual(3);
   });
 
   it('stops immediately when CLOSED is observed', async () => {
@@ -229,11 +228,9 @@ function expectInvalidGitHubOutput(fn: () => unknown, messageParts: string[]): v
 function makePostMergePoll(states: PRLifecycleState[]): {
   deps: Parameters<typeof pollPostMergeOutcome>[1];
   sleeps: number[];
-  heartbeats: unknown[];
   observed: () => number;
 } {
   const sleeps: number[] = [];
-  const heartbeats: unknown[] = [];
   let observed = 0;
   let now = 0;
   return {
@@ -245,9 +242,6 @@ function makePostMergePoll(states: PRLifecycleState[]): {
           ? { state, mergedAt: '2026-05-03T00:00:00Z' }
           : { state };
       },
-      heartbeat: (details) => {
-        heartbeats.push(details);
-      },
       sleep: async (ms) => {
         sleeps.push(ms);
         now += ms;
@@ -255,7 +249,6 @@ function makePostMergePoll(states: PRLifecycleState[]): {
       now: () => now,
     },
     sleeps,
-    heartbeats,
     observed: () => observed,
   };
 }
