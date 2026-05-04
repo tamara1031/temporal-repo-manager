@@ -73,18 +73,30 @@ function normalizeStep(raw: unknown): PlanStep | undefined {
 const PLAN_REVIEW_VERDICTS = ['ok', 'needs_revision'] as const;
 const REVIEW_VERDICTS = ['ok', 'needs_revision', 'critical_block'] as const;
 
+/**
+ * Shared fallback for reviewer parsers when structured output cannot be
+ * extracted. Logs a warning, then returns the `blocking_issues`/`suggestions`
+ * fields that every reviewer output shares; callers add their typed `verdict`.
+ */
+function parseFailFallback(
+  label: string,
+  text: string,
+  message: string,
+): { blocking_issues: string[]; suggestions: string[] } {
+  log.warn(`${label} produced unparseable output; coercing to needs_revision`, {
+    preview: text.slice(0, 200),
+    reason: message,
+  });
+  return {
+    blocking_issues: [`${label} returned invalid structured output: ${message}`],
+    suggestions: [],
+  };
+}
+
 export function parsePlanReviewOutput(text: string, concern: PlanReviewConcern): PlanReviewOutput {
   const extracted = extractJsonObjectResult(text);
   if (!extracted.ok) {
-    log.warn(`plan-reviewer-${concern} produced unparseable output; coercing to needs_revision`, {
-      preview: text.slice(0, 200),
-      reason: extracted.message,
-    });
-    return {
-      verdict: 'needs_revision',
-      blocking_issues: [`plan-reviewer-${concern} returned invalid structured output: ${extracted.message}`],
-      suggestions: [],
-    };
+    return { verdict: 'needs_revision', ...parseFailFallback(`plan-reviewer-${concern}`, text, extracted.message) };
   }
   const json = extracted.value;
   return {
@@ -97,15 +109,7 @@ export function parsePlanReviewOutput(text: string, concern: PlanReviewConcern):
 export function parseReviewOutput(text: string, concern: ReviewConcern): ReviewOutput {
   const extracted = extractJsonObjectResult(text);
   if (!extracted.ok) {
-    log.warn(`reviewer-${concern} produced unparseable output; pseudo-coercing to needs_revision`, {
-      preview: text.slice(0, 200),
-      reason: extracted.message,
-    });
-    return {
-      verdict: 'needs_revision',
-      blocking_issues: [`reviewer-${concern} returned invalid structured output: ${extracted.message}`],
-      suggestions: [],
-    };
+    return { verdict: 'needs_revision', ...parseFailFallback(`reviewer-${concern}`, text, extracted.message) };
   }
   const json = extracted.value;
   return {
