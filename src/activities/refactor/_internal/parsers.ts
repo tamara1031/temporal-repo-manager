@@ -5,9 +5,17 @@
  */
 
 import { ApplicationFailure, log } from '@temporalio/activity';
-import { extractJsonObjectResult } from '../../_internal/json-extract';
+import { extractJsonObjectResult, extractStringArray } from '../../_internal/json-extract';
 import { ERR_PLANNER_OUTPUT_INVALID } from '../../../errors';
 import type { ContextArtifact, PlanOutput, PlanStep, PlanReviewConcern, PlanReviewOutput, ReviewConcern, ReviewOutput } from './types';
+
+/**
+ * Normalize an unknown JSON value to a known string union.
+ * Returns `fallback` when the value is not in `valid`.
+ */
+function coerceVerdict<V extends string>(v: unknown, valid: readonly V[], fallback: V): V {
+  return valid.includes(v as V) ? (v as V) : fallback;
+}
 
 export function parseContextOutput(text: string): Omit<ContextArtifact, 'generatedAt'> {
   const extracted = extractJsonObjectResult(text);
@@ -24,13 +32,11 @@ export function parseContextOutput(text: string): Omit<ContextArtifact, 'generat
   }
   const json = extracted.value;
   const overview = typeof json.overview === 'string' ? json.overview : '';
-  const conventions = Array.isArray(json.conventions)
-    ? (json.conventions as unknown[]).filter((x): x is string => typeof x === 'string')
-    : [];
-  const interfaces = Array.isArray(json.interfaces)
-    ? (json.interfaces as unknown[]).filter((x): x is string => typeof x === 'string')
-    : [];
-  return { overview, conventions, interfaces };
+  return {
+    overview,
+    conventions: extractStringArray(json.conventions),
+    interfaces: extractStringArray(json.interfaces),
+  };
 }
 
 export function parsePlanOutput(text: string): PlanOutput {
@@ -58,15 +64,14 @@ function normalizeStep(raw: unknown): PlanStep | undefined {
   const r = raw as Record<string, unknown>;
   const title = typeof r.title === 'string' ? r.title : '';
   const description = typeof r.description === 'string' ? r.description : '';
-  const reqs = Array.isArray(r.critical_requirements)
-    ? (r.critical_requirements as unknown[]).filter((x): x is string => typeof x === 'string')
-    : [];
+  const reqs = extractStringArray(r.critical_requirements);
   if (!title || !description || reqs.length === 0) return undefined;
-  const target_files = Array.isArray(r.target_files)
-    ? (r.target_files as unknown[]).filter((x): x is string => typeof x === 'string')
-    : undefined;
+  const target_files = Array.isArray(r.target_files) ? extractStringArray(r.target_files) : undefined;
   return { title, description, critical_requirements: reqs, ...(target_files !== undefined && { target_files }) };
 }
+
+const PLAN_REVIEW_VERDICTS = ['ok', 'needs_revision'] as const;
+const REVIEW_VERDICTS = ['ok', 'needs_revision', 'critical_block'] as const;
 
 export function parsePlanReviewOutput(text: string, concern: PlanReviewConcern): PlanReviewOutput {
   const extracted = extractJsonObjectResult(text);
@@ -82,18 +87,11 @@ export function parsePlanReviewOutput(text: string, concern: PlanReviewConcern):
     };
   }
   const json = extracted.value;
-  const verdict = ((): PlanReviewOutput['verdict'] => {
-    const v = json.verdict;
-    if (v === 'ok' || v === 'needs_revision') return v;
-    return 'needs_revision';
-  })();
-  const blocking = Array.isArray(json.blocking_issues)
-    ? (json.blocking_issues as unknown[]).filter((x): x is string => typeof x === 'string')
-    : [];
-  const suggestions = Array.isArray(json.suggestions)
-    ? (json.suggestions as unknown[]).filter((x): x is string => typeof x === 'string')
-    : [];
-  return { verdict, blocking_issues: blocking, suggestions };
+  return {
+    verdict: coerceVerdict(json.verdict, PLAN_REVIEW_VERDICTS, 'needs_revision'),
+    blocking_issues: extractStringArray(json.blocking_issues),
+    suggestions: extractStringArray(json.suggestions),
+  };
 }
 
 export function parseReviewOutput(text: string, concern: ReviewConcern): ReviewOutput {
@@ -110,18 +108,11 @@ export function parseReviewOutput(text: string, concern: ReviewConcern): ReviewO
     };
   }
   const json = extracted.value;
-  const verdict = ((): ReviewOutput['verdict'] => {
-    const v = json.verdict;
-    if (v === 'ok' || v === 'needs_revision' || v === 'critical_block') return v;
-    return 'needs_revision';
-  })();
-  const blocking = Array.isArray(json.blocking_issues)
-    ? (json.blocking_issues as unknown[]).filter((x): x is string => typeof x === 'string')
-    : [];
-  const suggestions = Array.isArray(json.suggestions)
-    ? (json.suggestions as unknown[]).filter((x): x is string => typeof x === 'string')
-    : [];
-  return { verdict, blocking_issues: blocking, suggestions };
+  return {
+    verdict: coerceVerdict(json.verdict, REVIEW_VERDICTS, 'needs_revision'),
+    blocking_issues: extractStringArray(json.blocking_issues),
+    suggestions: extractStringArray(json.suggestions),
+  };
 }
 
 function invalidPlanOutput(message: string, text: string): ApplicationFailure {
