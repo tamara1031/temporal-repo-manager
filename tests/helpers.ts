@@ -2,6 +2,7 @@
  * Activity mock factory + shared workflow bundle for tests.
  */
 import * as path from 'path';
+import type { WorkflowStartOptions } from '@temporalio/client';
 import type { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker, bundleWorkflowCode, type WorkflowBundleWithSourceMap } from '@temporalio/worker';
 import type * as activities from '../src/activities';
@@ -63,11 +64,12 @@ export async function runWorkflowWithMocks<TWorkflow extends TestWorkflow>({
     workflowBundle: await getWorkflowBundle(),
     activities: mockActivities,
   });
-  const execution = env.client.workflow.execute(workflow, {
+  const startOptions = {
     taskQueue,
     workflowId,
     args,
-  });
+  } as unknown as WorkflowStartOptions<TWorkflow>;
+  const execution = env.client.workflow.execute(workflow, startOptions);
   const result = catchErrors
     ? await worker.runUntil(execution).catch((err: unknown) => err)
     : await worker.runUntil(execution);
