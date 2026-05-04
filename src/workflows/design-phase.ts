@@ -15,7 +15,7 @@
 
 import { log } from '@temporalio/workflow';
 import type { ContextArtifact, DesignPhaseRecord, PlanOutput } from '../activities/refactor';
-import { SpawnCounter } from './_internal/spawn-budget';
+import { SpawnCounter, type SpawnCounts } from './_internal/spawn-budget';
 import {
   runDesignPhase,
   DEFAULT_DESIGN_PHASE_CONFIG,
@@ -40,7 +40,7 @@ export interface DesignPhaseOutput {
   plan?: PlanOutput;
   designRecord?: DesignPhaseRecord;
   /** Codex spawns consumed, broken down by role. */
-  spawnCounts: Record<string, number>;
+  spawnCounts: SpawnCounts;
 }
 
 export async function designPhaseWorkflow(input: DesignPhaseInput): Promise<DesignPhaseOutput> {
