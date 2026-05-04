@@ -1,7 +1,8 @@
-import { Context, log } from '@temporalio/activity';
-import { ghEnv, sleepCancellable } from './_internal/gh-env';
+import { log } from '@temporalio/activity';
+import { ghEnv } from './_internal/gh-env';
 import { pollPostMergeOutcome, type PostMergeOutcome } from './_internal/post-merge-poll';
 import { observePRState } from './_internal/pr-state';
+import { withGitHubWaitHeartbeat } from './_internal/wait-heartbeat';
 
 export interface WaitForPostMergeInput {
   repoFullName: string;
@@ -22,28 +23,36 @@ export async function waitForPostMergeActivity(
   input: WaitForPostMergeInput,
 ): Promise<PostMergeOutcome> {
   const env = ghEnv();
-  const ctx = Context.current();
 
-  const outcome = await pollPostMergeOutcome(
-    {
-      prNumber: input.prNumber,
-      pollIntervalMs: input.pollIntervalMs,
-      maxPollAttempts: input.maxPollAttempts,
-    },
-    {
-      observe: async () => {
-        return observePRState(input.repoFullName, input.prNumber, env);
-      },
-      heartbeat: (details) => ctx.heartbeat(details),
-      sleep: (ms) => sleepCancellable(ms, ctx.cancellationSignal),
-      now: () => Date.now(),
-      onTerminalOutcome: (outcome, observed) => {
-        if (outcome === 'merged') {
-          log.info('PR merge observed', { prNumber: input.prNumber, mergedAt: observed.mergedAt });
-        } else {
-          log.info('PR closed externally during post-merge poll', { prNumber: input.prNumber });
-        }
-      },
+  const outcome = await withGitHubWaitHeartbeat(
+    { phase: 'post-merge', prNumber: input.prNumber },
+    async ({ sleep }) => {
+      return pollPostMergeOutcome(
+        {
+          prNumber: input.prNumber,
+          pollIntervalMs: input.pollIntervalMs,
+          maxPollAttempts: input.maxPollAttempts,
+        },
+        {
+          observe: async () => {
+            return observePRState(input.repoFullName, input.prNumber, env);
+          },
+          sleep,
+          now: Date.now,
+          onTerminalOutcome: (outcome, observed) => {
+            if (outcome === 'merged') {
+              log.info('PR merge observed', {
+                prNumber: input.prNumber,
+                mergedAt: observed.mergedAt,
+              });
+            } else {
+              log.info('PR closed externally during post-merge poll', {
+                prNumber: input.prNumber,
+              });
+            }
+          },
+        },
+      );
     },
   );
   if (outcome === 'merge-queued') {
