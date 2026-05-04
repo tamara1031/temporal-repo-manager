@@ -85,7 +85,7 @@ describe('periodicRefactorWorkflow', () => {
     expect(names).toContain('diffStatActivity');
     // Parliament must NOT run when the gate trips.
     expect(names).not.toContain('reviewActivity');
-    expect(names).toContain('commitAllActivity');
+    expect(names).toContain('commitAndPushActivity');
     expect(names).toContain('createPRActivity');
   });
 
@@ -191,7 +191,7 @@ describe('periodicRefactorWorkflow', () => {
     // Two reviewers run in parallel.
     expect(names.filter((n) => n === 'reviewActivity').length).toBe(2);
     expect(names).toContain('cloneRepoActivity');
-    expect(names).toContain('commitAllActivity');
+    expect(names).toContain('commitAndPushActivity');
     expect(names).toContain('createPRActivity');
     expect(names).toContain('waitForCIActivity');
     expect(names).toContain('mergePRActivity');
@@ -253,7 +253,7 @@ describe('periodicRefactorWorkflow', () => {
     expect(names).toContain('consultAdvisorActivity');
     expect(names).toContain('restoreActivity');
     // Must not commit/push after rollback.
-    expect(names).not.toContain('commitAllActivity');
+    expect(names).not.toContain('commitAndPushActivity');
     expect(names).not.toContain('createPRActivity');
   });
 

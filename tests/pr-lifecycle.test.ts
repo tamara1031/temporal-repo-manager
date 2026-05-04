@@ -61,6 +61,7 @@ describe('robustPRMergeWorkflow', () => {
 
     const names = calls.log.map((c) => c.name);
     expect(names).toEqual([
+      'ensureWorkdirActivity', // workdir check at workflow start (pod-replacement guard)
       'pushBranchActivity', // initial setUpstream push
       'createPRActivity',
       'waitForCIActivity',

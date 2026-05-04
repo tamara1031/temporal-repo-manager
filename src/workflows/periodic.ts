@@ -80,7 +80,13 @@ export async function periodicRefactorWorkflow(
     branch,
     ref: baseBranch,
   });
-  const workdir = clone.workdir;
+  let workdir = clone.workdir;
+
+  // Push the branch to GitHub immediately so subsequent ensureWorkdirActivity
+  // calls can re-clone it on pod replacement. The narrow window between this
+  // clone and the push is an accepted trade-off: a pod death in those few
+  // seconds requires a clean retry on the next schedule tick.
+  await heavy.pushBranchActivity({ workdir, branch, setUpstream: true });
   const spawnCounter = new SpawnCounter(DEFAULT_PERIODIC_SPAWN_CAP);
   const advisorBudget = new AdvisorBudget(input.maxAdvisorConsults ?? 1);
   const advisorAudits: AdvisorAuditEntry[] = [];
@@ -130,6 +136,14 @@ export async function periodicRefactorWorkflow(
     const plannedSteps = plan.steps.slice(0, MAX_STEPS);
     const droppedFromPlan = plan.steps.slice(MAX_STEPS);
 
+    // Recover workdir if the pod was replaced during the (potentially long)
+    // design phase. The branch is already on GitHub from the push above.
+    ({ workdir } = await heavy.ensureWorkdirActivity({
+      workdir,
+      repoFullName: input.repoFullName,
+      branch,
+    }));
+
     // ── Phase 2. Step loop ───────────────────────────────────────────────
     // Each step runs as its own child workflow (`refactorStepWorkflow`) so the
     // implement→Parliament loop is reusable from non-periodic orchestrators.
@@ -137,6 +151,10 @@ export async function periodicRefactorWorkflow(
     // the deltas back to the parent's counters.
     const stepRecords: StepRecord[] = [];
     let circuitBroken: CircuitBreaker | undefined;
+    // True once any step's changes have been pushed to GitHub. Used by the
+    // no-changes gate below — inter-step commits leave the working tree clean
+    // so statusPorcelainActivity alone cannot detect committed-but-not-merged work.
+    let hasChanges = false;
 
     for (let stepIndex = 0; stepIndex < plannedSteps.length; stepIndex++) {
       const step = plannedSteps[stepIndex];
@@ -149,6 +167,13 @@ export async function periodicRefactorWorkflow(
         });
         break;
       }
+
+      // Recover workdir if the pod was replaced since the last step completed.
+      ({ workdir } = await heavy.ensureWorkdirActivity({
+        workdir,
+        repoFullName: input.repoFullName,
+        branch,
+      }));
 
       const childOutput = await executeChild(refactorStepWorkflow, {
         args: [
@@ -169,6 +194,28 @@ export async function periodicRefactorWorkflow(
       advisorBudget.addConsumed(childOutput.advisorConsumed);
       advisorAudits.push(...childOutput.advisorAudits);
 
+      // Push this step's work to GitHub before the next wait boundary so a
+      // pod replacement between steps doesn't lose accumulated changes.
+      // Only call for steps that kept their changes: converged or
+      // parliament-skipped (popSnap path). Rolled-back and circuit-broken
+      // steps call restoreAndPop(), which leaves the working tree clean.
+      // budget-halted may carry partial implementer work if the budget ran
+      // out after the implementer ran but before the reviewers could.
+      const stepProducedChanges =
+        childOutput.kind === 'budget-halted' ||
+        (childOutput.kind === 'completed' &&
+          (childOutput.record?.outcome === 'converged' ||
+            childOutput.record?.outcome === 'parliament-skipped'));
+
+      if (stepProducedChanges) {
+        const stepPush = await heavy.commitAndPushActivity({
+          workdir,
+          branch,
+          message: `wip(refactor): step ${stepIndex + 1}/${plannedSteps.length}`,
+        });
+        if (stepPush.pushed) hasChanges = true;
+      }
+
       if (childOutput.kind === 'budget-halted') {
         break;
       }
@@ -186,8 +233,11 @@ export async function periodicRefactorWorkflow(
     }
 
     // ── Phase 3. Handoff ─────────────────────────────────────────────────
+    // Check both committed (hasChanges) and uncommitted working-tree changes.
+    // Inter-step checkpoints leave the tree clean but their pushed commits
+    // still count as real work, so we must not short-circuit on tree status alone.
     const finalStatus = await cheap.statusPorcelainActivity({ workdir });
-    if (finalStatus.entries.length === 0) {
+    if (!hasChanges && finalStatus.entries.length === 0) {
       log.info('no working-tree changes after refactor pass; skipping PR');
       return { skipped: 'no-changes' };
     }
@@ -204,8 +254,9 @@ export async function periodicRefactorWorkflow(
       designRecord: designOutput.designRecord,
     });
 
-    await heavy.commitAllActivity({
+    await heavy.commitAndPushActivity({
       workdir,
+      branch,
       message: `refactor(auto): ${branch}`,
     });
 

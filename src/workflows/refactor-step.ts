@@ -10,9 +10,10 @@
  * the child runs its own bookkeeping locally, and the caller reconciles
  * the deltas afterward.
  *
- * Constraint: the workdir is pod-local (same as the existing parent/child
- * relationship with `robustPRMergeWorkflow`). Parent and child must run
- * on the same Worker.
+ * The workdir is shared between parent and child via the pod-local filesystem.
+ * Parent and child run on the same Worker task queue; the parent calls
+ * `ensureWorkdirActivity` at each step boundary so a pod replacement between
+ * steps is recovered before this workflow starts.
  */
 
 import { log } from '@temporalio/workflow';

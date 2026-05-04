@@ -101,6 +101,15 @@ export async function robustPRMergeWorkflow(
   // path when the pod is replaced between activities.
   let workdir = input.workdir;
 
+  // Guard against pod replacement between periodicRefactorWorkflow spawning us
+  // (with ABANDON policy) and our first git activity. The parent pushes the
+  // branch before spawning, so GitHub is always reachable here.
+  ({ workdir } = await heavy.ensureWorkdirActivity({
+    workdir,
+    repoFullName: input.repoFullName,
+    branch: input.branch,
+  }));
+
   await heavy.pushBranchActivity({
     workdir,
     branch: input.branch,
