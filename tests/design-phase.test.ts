@@ -69,7 +69,7 @@ describe('designPhaseWorkflow', () => {
     const { result, calls } = await runWorkflow('design-phase-converged', baseInput);
 
     expect(result.outcome).toBe('completed');
-    if (result.outcome !== 'completed') return;
+    if (result.outcome !== 'completed') throw new Error(`unexpected outcome: ${result.outcome}`);
     expect(result.plan.theme).toBe('tighten module boundaries');
     expect(result.designRecord.outcome).toBe('converged');
     expect(result.designRecord.iters).toBe(1);
@@ -91,7 +91,7 @@ describe('designPhaseWorkflow', () => {
     });
 
     expect(result.outcome).toBe('completed');
-    if (result.outcome !== 'completed') return;
+    if (result.outcome !== 'completed') throw new Error(`unexpected outcome: ${result.outcome}`);
     expect(result.plan).toBeDefined();
     expect(result.designRecord.outcome).toBe('single-shot');
     expect(result.designRecord.rounds).toHaveLength(0);
@@ -115,7 +115,7 @@ describe('designPhaseWorkflow', () => {
     });
 
     expect(result.outcome).toBe('no-op');
-    if (result.outcome !== 'no-op') return;
+    if (result.outcome !== 'no-op') throw new Error(`unexpected outcome: ${result.outcome}`);
     expect(result.plan.theme).toBe('no-op');
     // Parliament should not run for a no-op plan.
     expect(result.spawnCounts).toEqual({ planner: 1 });
@@ -134,7 +134,7 @@ describe('designPhaseWorkflow', () => {
     });
 
     expect(result.outcome).toBe('no-op');
-    if (result.outcome !== 'no-op') return;
+    if (result.outcome !== 'no-op') throw new Error(`unexpected outcome: ${result.outcome}`);
     expect(result.plan.steps).toEqual([]);
     expect(result.spawnCounts).toEqual({ planner: 1 });
 
@@ -210,7 +210,7 @@ describe('designPhaseWorkflow', () => {
     );
 
     expect(result.outcome).toBe('completed');
-    if (result.outcome !== 'completed') return;
+    if (result.outcome !== 'completed') throw new Error(`unexpected outcome: ${result.outcome}`);
     expect(result.designRecord.outcome).toBe('max-rounds');
     expect(result.designRecord.iters).toBe(1);
 
@@ -250,7 +250,7 @@ describe('designPhaseWorkflow', () => {
     );
 
     expect(result.outcome).toBe('no-op');
-    if (result.outcome !== 'no-op') return;
+    if (result.outcome !== 'no-op') throw new Error(`unexpected outcome: ${result.outcome}`);
     expect(result.plan.theme).toBe('no-op');
     expect(result.designRecord.iters).toBe(1);
     expect(result.designRecord.rounds).toHaveLength(1);
@@ -283,7 +283,7 @@ describe('designPhaseWorkflow', () => {
     );
 
     expect(result.outcome).toBe('no-op');
-    if (result.outcome !== 'no-op') return;
+    if (result.outcome !== 'no-op') throw new Error(`unexpected outcome: ${result.outcome}`);
     expect(result.plan.steps).toEqual([]);
     expect(result.designRecord.iters).toBe(1);
     expect(result.designRecord.rounds).toHaveLength(1);
@@ -324,7 +324,7 @@ describe('designPhaseWorkflow', () => {
     );
 
     expect(result.outcome).toBe('completed');
-    if (result.outcome !== 'completed') return;
+    if (result.outcome !== 'completed') throw new Error(`unexpected outcome: ${result.outcome}`);
     expect(result.designRecord.outcome).toBe('dropped-no-progress');
     // Only one review round completed before no-progress was detected.
     expect(result.designRecord.iters).toBe(1);
@@ -372,7 +372,7 @@ describe('designPhaseWorkflow', () => {
     );
 
     expect(result.outcome).toBe('completed');
-    if (result.outcome !== 'completed') return;
+    if (result.outcome !== 'completed') throw new Error(`unexpected outcome: ${result.outcome}`);
     expect(result.designRecord.outcome).toBe('max-rounds');
     expect(result.plan.steps[0].target_files).toEqual([
       'src/activities/refactor/_internal/types.ts',

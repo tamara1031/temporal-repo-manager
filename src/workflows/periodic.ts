@@ -234,7 +234,7 @@ export async function periodicRefactorWorkflow(
         circuitBroken = childOutput.circuitBroken;
         break;
       }
-      // kind === 'completed'
+      // kind === 'completed' — record is guaranteed StepRecord by the discriminated union
       // dropped-not-converged / dropped-no-progress / rolled-back-critical-block:
       // the child workflow already rolled back this step's changes via
       // restoreAndPop() before returning, so no workdir cleanup is needed here.

@@ -34,12 +34,17 @@ export interface DesignPhaseInput {
 }
 
 /**
- * Discriminated union mirroring the internal `DesignPhaseLoopResult` shape,
- * with `spawnCounts` added to every variant. Using a discriminated union (rather
- * than an optional-field interface) means callers never need a `!` assertion:
- * TypeScript narrows `plan` and `designRecord` as present once `outcome` is
- * checked to be `'completed'` or `'no-op'`. Parallels the pattern established
+ * Discriminated union returned by `designPhaseWorkflow`.
+ *
+ * Each variant carries exactly the fields that are meaningful for its `outcome`,
+ * enabling call sites to access `plan` and `designRecord` without defensive
+ * null checks after narrowing on `outcome`. Parallels the pattern established
  * for `RefactorStepOutput`.
+ *
+ * - `completed`        — `plan` and `designRecord` are always present; proceed to implementation.
+ * - `no-op`            — planner returned no actionable theme; `plan` present for inspection.
+ * - `plan-failed`      — planner threw a non-retryable error; no plan available.
+ * - `budget-exhausted` — not enough spawn budget for even the initial plan call.
  */
 export type DesignPhaseOutput =
   | { outcome: 'completed'; plan: PlanOutput; designRecord: DesignPhaseRecord; spawnCounts: SpawnCounts }

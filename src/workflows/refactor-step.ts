@@ -61,6 +61,17 @@ interface RefactorStepAccounting {
   advisorAudits: AdvisorAuditEntry[];
 }
 
+/**
+ * Discriminated union returned by `refactorStepWorkflow`.
+ *
+ * Each variant carries exactly the fields that are meaningful for its `kind`,
+ * which lets call sites use TypeScript's control-flow narrowing to access
+ * `record` and `circuitBroken` without defensive null checks.
+ *
+ * - `completed`      — step finished; `record` is always present.
+ * - `budget-halted`  — spawn budget exhausted; no record (partial step discarded).
+ * - `circuit-broken` — reviewer critical_block; `record` and `circuitBroken` present.
+ */
 export type RefactorStepOutput =
   | (RefactorStepAccounting & {
       kind: 'completed';
