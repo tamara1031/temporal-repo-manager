@@ -22,10 +22,9 @@ import { AdvisorBudget, type AdvisorAuditEntry } from './_internal/advisor';
 import { SpawnCounter, type SpawnCounts } from './_internal/spawn-budget';
 import {
   runRefactorStep,
-  type CircuitBreaker,
   type StepLoopConfig,
 } from './_internal/refactor-step-loop';
-import type { StepRecord } from './_internal/refactor-report';
+import type { CircuitBreaker, StepRecord } from './_internal/step-types';
 
 // Re-export the canonical default so consumers (orchestrators + tests) get
 // `refactorStepWorkflow` and its config defaults from a single import path.
@@ -53,10 +52,7 @@ export interface RefactorStepInput {
  */
 export type RefactorStepKind = 'completed' | 'budget-halted' | 'circuit-broken';
 
-/**
- * Accounting fields present in every variant of `RefactorStepOutput`.
- */
-interface StepOutputCommon {
+interface RefactorStepAccounting {
   /** Codex spawns this step actually consumed, broken down by role. */
   spawnCounts: SpawnCounts;
   /** Advisor consults this step actually consumed (≤ input.advisorBudget). */
@@ -77,9 +73,20 @@ interface StepOutputCommon {
  * - `circuit-broken` — reviewer critical_block; `record` and `circuitBroken` present.
  */
 export type RefactorStepOutput =
-  | ({ kind: 'completed'; record: StepRecord } & StepOutputCommon)
-  | ({ kind: 'budget-halted' } & StepOutputCommon)
-  | ({ kind: 'circuit-broken'; record: StepRecord; circuitBroken: CircuitBreaker } & StepOutputCommon);
+  | (RefactorStepAccounting & {
+      kind: 'completed';
+      /** The parent appends this to its `stepRecords` list. */
+      record: StepRecord;
+    })
+  | (RefactorStepAccounting & {
+      kind: 'circuit-broken';
+      /** The parent appends this to its `stepRecords` list. */
+      record: StepRecord;
+      circuitBroken: CircuitBreaker;
+    })
+  | (RefactorStepAccounting & {
+      kind: 'budget-halted';
+    });
 
 export async function refactorStepWorkflow(
   input: RefactorStepInput,

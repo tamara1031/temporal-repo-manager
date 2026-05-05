@@ -5,7 +5,11 @@ import {
   type CompletedCIDecision,
   type RollupSnapshot,
 } from './ci-rollup';
-import { nextPollSleepMs, normalizePollIntervalMs } from './polling-budget';
+import {
+  GITHUB_CI_POLL_DEFAULTS,
+  normalizePollTimingWithDefaults,
+  pollWithBudget,
+} from './polling-budget';
 
 export interface CIResult {
   status: 'success' | 'failure' | 'timeout' | 'closed' | 'merged';
@@ -36,59 +40,61 @@ export interface WaitForCIPollDeps {
   onNoChecksSettled?: (stabilizationSeconds: number) => void;
 }
 
-const DEFAULT_CI_POLL_INTERVAL_MS = 30 * 1000;
-
 export async function pollCIStatus(
   input: WaitForCIPollOptions,
   deps: WaitForCIPollDeps,
 ): Promise<CIResult> {
-  const interval = normalizePollIntervalMs(
-    (input.pollIntervalSeconds ?? DEFAULT_CI_POLL_INTERVAL_MS / 1000) * 1000,
-    DEFAULT_CI_POLL_INTERVAL_MS,
-  );
   const minStabilizationMs = (input.minSuccessStabilizationSeconds ?? 60) * 1000;
-  const deadline = deps.now() + (input.maxWaitSeconds ?? 60 * 60) * 1000;
+  const timing = normalizePollTimingWithDefaults({
+    nowMs: deps.now(),
+    intervalMs:
+      input.pollIntervalSeconds === undefined ? undefined : input.pollIntervalSeconds * 1000,
+    maxWaitMs: input.maxWaitSeconds === undefined ? undefined : input.maxWaitSeconds * 1000,
+    defaults: GITHUB_CI_POLL_DEFAULTS,
+  });
   let stabilization: RollupSnapshot | undefined;
 
-  while (deps.now() < deadline) {
-    const observed = await deps.observe();
-    if (observed.state === 'CLOSED') {
-      deps.onExternallyClosed?.();
-      return { status: 'closed', failedRunIds: [], failedJobNames: [] };
-    }
-    if (observed.state === 'MERGED') {
-      deps.onExternallyMerged?.();
-      return { status: 'merged', failedRunIds: [], failedJobNames: [] };
-    }
-
-    const checks = parseStatusCheckRollupJSON(observed.checksJson);
-    const decision = decideCIStatus(checks);
-
-    if (decision.status === 'failure') {
-      return toCIResult(decision);
-    }
-
-    if (decision.status === 'success') {
-      const stab = evaluateStabilization(stabilization, checks, deps.now(), minStabilizationMs);
-      if (stab.kind === 'settle') {
-        if (checks.length === 0) {
-          deps.onNoChecksSettled?.(minStabilizationMs / 1000);
-        }
-        return toCIResult(decision);
+  return pollWithBudget<CIResult>({
+    intervalMs: timing.intervalMs,
+    defaultIntervalMs: GITHUB_CI_POLL_DEFAULTS.intervalMs,
+    deadlineMs: timing.deadlineMs,
+    now: deps.now,
+    sleep: deps.sleep,
+    observe: async () => {
+      const observed = await deps.observe();
+      if (observed.state === 'CLOSED') {
+        deps.onExternallyClosed?.();
+        return { done: true, value: { status: 'closed', failedRunIds: [], failedJobNames: [] } };
       }
-      stabilization = stab.next;
-    } else {
-      stabilization = undefined;
-    }
+      if (observed.state === 'MERGED') {
+        deps.onExternallyMerged?.();
+        return { done: true, value: { status: 'merged', failedRunIds: [], failedJobNames: [] } };
+      }
 
-    const sleepMs = nextPollSleepMs(deadline, deps.now(), interval);
-    if (sleepMs === undefined) {
-      break;
-    }
-    await deps.sleep(sleepMs);
-  }
+      const checks = parseStatusCheckRollupJSON(observed.checksJson);
+      const decision = decideCIStatus(checks);
 
-  return { status: 'timeout', failedRunIds: [], failedJobNames: [] };
+      if (decision.status === 'failure') {
+        return { done: true, value: toCIResult(decision) };
+      }
+
+      if (decision.status === 'success') {
+        const stab = evaluateStabilization(stabilization, checks, deps.now(), minStabilizationMs);
+        if (stab.kind === 'settle') {
+          if (checks.length === 0) {
+            deps.onNoChecksSettled?.(minStabilizationMs / 1000);
+          }
+          return { done: true, value: toCIResult(decision) };
+        }
+        stabilization = stab.next;
+      } else {
+        stabilization = undefined;
+      }
+
+      return { done: false };
+    },
+    onTimeout: () => ({ status: 'timeout', failedRunIds: [], failedJobNames: [] }),
+  });
 }
 
 function toCIResult(decision: CompletedCIDecision): CIResult {

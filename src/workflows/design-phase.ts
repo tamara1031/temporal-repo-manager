@@ -38,7 +38,8 @@ export interface DesignPhaseInput {
  *
  * Each variant carries exactly the fields that are meaningful for its `outcome`,
  * enabling call sites to access `plan` and `designRecord` without defensive
- * null checks after narrowing on `outcome`.
+ * null checks after narrowing on `outcome`. Parallels the pattern established
+ * for `RefactorStepOutput`.
  *
  * - `completed`        — `plan` and `designRecord` are always present; proceed to implementation.
  * - `no-op`            — planner returned no actionable theme; `plan` present for inspection.
@@ -51,7 +52,7 @@ export type DesignPhaseOutput =
   | { outcome: 'plan-failed'; spawnCounts: SpawnCounts }
   | { outcome: 'budget-exhausted'; spawnCounts: SpawnCounts };
 
-/** Union of all possible `outcome` values. Derived from `DesignPhaseOutput` to stay in sync. */
+/** All possible outcomes for a design phase run, derived from the output union. */
 export type DesignPhaseOutcome = DesignPhaseOutput['outcome'];
 
 export async function designPhaseWorkflow(input: DesignPhaseInput): Promise<DesignPhaseOutput> {
@@ -74,13 +75,14 @@ export async function designPhaseWorkflow(input: DesignPhaseInput): Promise<Desi
 
   log.info('designPhaseWorkflow done', { outcome: result.outcome, spawnCounts });
 
-  if (result.outcome === 'plan-failed' || result.outcome === 'budget-exhausted') {
-    return { outcome: result.outcome, spawnCounts };
+  if (result.outcome === 'plan-failed') {
+    return { outcome: 'plan-failed', spawnCounts };
   }
-  return {
-    outcome: result.outcome,
-    plan: result.plan,
-    designRecord: result.record,
-    spawnCounts,
-  };
+  if (result.outcome === 'budget-exhausted') {
+    return { outcome: 'budget-exhausted', spawnCounts };
+  }
+  if (result.outcome === 'no-op') {
+    return { outcome: 'no-op', plan: result.plan, designRecord: result.record, spawnCounts };
+  }
+  return { outcome: 'completed', plan: result.plan, designRecord: result.record, spawnCounts };
 }

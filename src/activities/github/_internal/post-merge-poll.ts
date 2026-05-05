@@ -1,11 +1,11 @@
 import type { PRLifecycleState } from '../observe-pr-state';
-import { nextPollSleepMs, normalizePollIntervalMs } from './polling-budget';
+import {
+  GITHUB_POST_MERGE_POLL_DEFAULTS,
+  normalizeAttemptPollTimingWithDefaults,
+  pollWithBudget,
+} from './polling-budget';
 
 export type PostMergeOutcome = 'merged' | 'merge-queued' | 'closed-externally';
-
-const DEFAULT_POST_MERGE_POLL_ATTEMPTS = 6;
-const DEFAULT_POST_MERGE_POLL_INTERVAL_MS = 10_000;
-const MAX_POST_MERGE_ACTIVITY_WAIT_MS = 4 * 60 * 1000;
 
 export interface PostMergePollOptions {
   prNumber: number;
@@ -28,36 +28,34 @@ export async function pollPostMergeOutcome(
   input: PostMergePollOptions,
   deps: PostMergePollDeps,
 ): Promise<PostMergeOutcome> {
-  const attempts = Math.max(
-    1,
-    Math.floor(input.maxPollAttempts ?? DEFAULT_POST_MERGE_POLL_ATTEMPTS),
-  );
-  const intervalMs = normalizePollIntervalMs(
-    Math.floor(input.pollIntervalMs ?? DEFAULT_POST_MERGE_POLL_INTERVAL_MS),
-    DEFAULT_POST_MERGE_POLL_INTERVAL_MS,
-  );
-  const configuredWaitMs = attempts * intervalMs;
-  const maxActivityWaitMs = Math.max(
-    0,
-    Math.floor(input.maxActivityWaitMs ?? MAX_POST_MERGE_ACTIVITY_WAIT_MS),
-  );
-  const deadlineMs = deps.now() + Math.min(configuredWaitMs, maxActivityWaitMs);
+  const timing = normalizeAttemptPollTimingWithDefaults({
+    nowMs: deps.now(),
+    intervalMs:
+      input.pollIntervalMs === undefined ? undefined : Math.floor(input.pollIntervalMs),
+    attempts: input.maxPollAttempts,
+    maxWaitMs: input.maxActivityWaitMs,
+    defaults: GITHUB_POST_MERGE_POLL_DEFAULTS,
+  });
 
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    const observed = await deps.observe();
-    const outcome = mapPostMergeStateToOutcome(observed.state, false);
-    if (outcome && outcome !== 'merge-queued') {
-      deps.onTerminalOutcome?.(outcome, observed);
-      return outcome;
-    }
-
-    if (attempt >= attempts) break;
-    const sleepMs = nextPollSleepMs(deadlineMs, deps.now(), intervalMs);
-    if (sleepMs === undefined) break;
-    await deps.sleep(sleepMs);
-  }
-
-  return 'merge-queued';
+  return pollWithBudget<PostMergeOutcome>({
+    intervalMs: timing.intervalMs,
+    defaultIntervalMs: GITHUB_POST_MERGE_POLL_DEFAULTS.intervalMs,
+    deadlineMs: timing.deadlineMs,
+    now: deps.now,
+    sleep: deps.sleep,
+    maxAttempts: timing.attempts,
+    observeAtDeadline: true,
+    observe: async () => {
+      const observed = await deps.observe();
+      const outcome = mapPostMergeStateToOutcome(observed.state, false);
+      if (outcome && outcome !== 'merge-queued') {
+        deps.onTerminalOutcome?.(outcome, observed);
+        return { done: true, value: outcome };
+      }
+      return { done: false };
+    },
+    onTimeout: () => 'merge-queued',
+  });
 }
 
 export function mapPostMergeStateToOutcome(

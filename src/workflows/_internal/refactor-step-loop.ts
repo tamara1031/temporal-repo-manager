@@ -23,8 +23,8 @@
  * full-workdir restores safe: `restoreActivity({ workdir })` only undoes the
  * current step (the snapshot is HEAD), and `popWorkdirSnapshotActivity`
  * then un-commits the checkpoint to return prior-step work to the working
- * tree as unstaged modifications. Every exit path calls either
- * `restoreAndPop` (rollback) or `keepAndPop` (convergence) exactly once.
+ * tree as unstaged modifications. Every exit path calls the snapshot
+ * lifecycle's `rollback` or `keep` method exactly once.
  */
 
 import { log } from '@temporalio/workflow';
@@ -35,16 +35,10 @@ import type {
   ReviewConcern,
 } from '../../activities/refactor';
 import { arraysEqual, diffPorcelain } from './porcelain';
-import { collectFeedback } from './feedback';
+import { collectFeedback, summarizeReviews } from './feedback';
 import { AdvisorBudget, consultAdvisor, type AdvisorAuditEntry } from './advisor';
-import type { StepRecord } from './refactor-report';
+import type { CircuitBreaker, StepRecord } from './step-types';
 import type { SpawnCounter } from './spawn-budget';
-
-export interface CircuitBreaker {
-  step: PlanStep;
-  concern: ReviewConcern;
-  bullets: string[];
-}
 
 export type StepLoopResult =
   | { kind: 'completed'; record: StepRecord }
@@ -89,6 +83,47 @@ export interface RunStepInput {
   config: StepLoopConfig;
 }
 
+interface StepSnapshotLifecycle {
+  keep(): Promise<void>;
+  rollback(): Promise<void>;
+  revertPaths(paths: string[]): Promise<void>;
+}
+
+async function startStepSnapshotLifecycle(workdir: string): Promise<StepSnapshotLifecycle> {
+  // Commit any accumulated prior-step changes as a checkpoint so that a full
+  // restoreActivity({ workdir }) only undoes THIS step's work (HEAD = snapshot).
+  // popSnapshot() then un-commits the checkpoint, restoring prior changes to
+  // the working tree. keep()/rollback() are called exactly once on every exit
+  // path from runRefactorStep.
+  const snap = await cheap.snapshotWorkdirActivity({ workdir });
+  let finished = false;
+
+  const finalizeSnapshot = async (rollback: boolean) => {
+    if (finished) {
+      return;
+    }
+    if (rollback) {
+      await cheap.restoreActivity({ workdir });
+    }
+    if (snap.snapped) {
+      await cheap.popWorkdirSnapshotActivity({ workdir });
+    }
+    finished = true;
+  };
+
+  return {
+    async keep() {
+      await finalizeSnapshot(false);
+    },
+    async rollback() {
+      await finalizeSnapshot(true);
+    },
+    async revertPaths(paths: string[]) {
+      await cheap.restoreActivity({ workdir, paths });
+    },
+  };
+}
+
 /**
  * Run one plan step end-to-end (all iterations, with circuit-breaker /
  * budget-halt handling). Caller decides whether to continue with the next
@@ -120,23 +155,7 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
   let lastDiffTruncated = false;
   let lastPorcelainEntries: string[] | undefined;
 
-  // Commit any accumulated prior-step changes as a checkpoint so that a full
-  // restoreActivity({ workdir }) only undoes THIS step's work (HEAD = snapshot).
-  // popSnap() then un-commits the checkpoint, restoring prior changes to the
-  // working tree. Both helpers are called exactly once on every exit path.
-  const snap = await cheap.snapshotWorkdirActivity({ workdir });
-
-  const popSnap = async () => {
-    if (snap.snapped) {
-      await cheap.popWorkdirSnapshotActivity({ workdir });
-    }
-  };
-
-  // Discard this step's changes and restore the prior-step state.
-  const restoreAndPop = async () => {
-    await cheap.restoreActivity({ workdir }); // resets working tree to HEAD (= snapshot)
-    await popSnap(); // un-commits snapshot → prior changes back as unstaged
-  };
+  const snapshot = await startStepSnapshotLifecycle(workdir);
 
   for (let iter = 0; iter < maxIter; iter++) {
     record.iters = iter + 1;
@@ -147,7 +166,7 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
         step: step.title,
       });
       // No implementer ran this iter — keep any prior-iter implementer changes.
-      await popSnap();
+      await snapshot.keep();
       return { kind: 'budget-halted' };
     }
     spawnCounter.consume('implementer', 1);
@@ -200,7 +219,7 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
       log.info('no progress between iterations; rolling back this step', {
         step: step.title,
       });
-      await restoreAndPop();
+      await snapshot.rollback();
       record.outcome = 'dropped-no-progress';
       return { kind: 'completed', record };
     }
@@ -220,7 +239,7 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
         skipped: 'trivial-diff',
       });
       record.outcome = 'parliament-skipped';
-      await popSnap();
+      await snapshot.keep();
       return { kind: 'completed', record };
     }
 
@@ -232,7 +251,7 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
         remainingBudget,
       });
       // Implementer ran — keep its changes so they can go into the final PR.
-      await popSnap();
+      await snapshot.keep();
       return { kind: 'budget-halted' };
     }
     spawnCounter.consume('reviewer', reviewerConcerns.length);
@@ -254,18 +273,14 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
     const driftedFiles = diffPorcelain(postImplStatus.entries, postReviewStatus.entries);
     if (driftedFiles.length > 0) {
       log.warn('reviewer drift detected; reverting', { files: driftedFiles });
-      await cheap.restoreActivity({ workdir, paths: driftedFiles });
+      await snapshot.revertPaths(driftedFiles);
       record.driftReverts.push(...driftedFiles);
     }
 
     // 6. Aggregate
     record.parliamentSummary.push({
       iter,
-      reviews: reviews.map((r, i) => ({
-        concern: reviewerConcerns[i],
-        verdict: r.verdict,
-        bullets: [...r.blocking_issues, ...r.suggestions].slice(0, 3),
-      })),
+      reviews: summarizeReviews(reviews, reviewerConcerns),
     });
 
     const blocker = reviews.findIndex((r) => r.verdict === 'critical_block');
@@ -317,7 +332,7 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
         step: step.title,
         concern: blockerConcern,
       });
-      await restoreAndPop();
+      await snapshot.rollback();
       record.outcome = 'rolled-back-critical-block';
       return {
         kind: 'circuit-broken',
@@ -328,7 +343,7 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
 
     if (reviews.every((r) => r.verdict === 'ok')) {
       record.outcome = 'converged';
-      await popSnap();
+      await snapshot.keep();
       return { kind: 'completed', record };
     }
 
@@ -337,6 +352,6 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
   } // end iterLoop
 
   // Fell through maxIter without convergence — roll back this step's changes.
-  await restoreAndPop();
+  await snapshot.rollback();
   return { kind: 'completed', record }; // record.outcome = 'dropped-not-converged'
 }
