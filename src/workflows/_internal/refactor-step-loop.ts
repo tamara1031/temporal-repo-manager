@@ -37,14 +37,12 @@ import type {
 import { arraysEqual, diffPorcelain } from './porcelain';
 import { collectFeedback } from './feedback';
 import { AdvisorBudget, consultAdvisor, type AdvisorAuditEntry } from './advisor';
-import type { StepRecord } from './refactor-report';
+import type { CircuitBreaker, StepRecord } from './step-types';
 import type { SpawnCounter } from './spawn-budget';
 
-export interface CircuitBreaker {
-  step: PlanStep;
-  concern: ReviewConcern;
-  bullets: string[];
-}
+// Re-exported so consumers that import CircuitBreaker from this module continue
+// to work without changes. The canonical definition lives in step-types.ts.
+export type { CircuitBreaker } from './step-types';
 
 export type StepLoopResult =
   | { kind: 'completed'; record: StepRecord }
