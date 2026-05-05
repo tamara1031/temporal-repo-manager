@@ -1,5 +1,9 @@
 import type { ObservePRStateOutput, PRLifecycleState } from '../observe-pr-state';
-import { normalizePollTiming, pollWithBudget } from './polling-budget';
+import {
+  GITHUB_PR_STATE_POLL_DEFAULTS,
+  normalizePollTimingWithDefaults,
+  pollWithBudget,
+} from './polling-budget';
 
 export interface WaitForPRStatePollOptions {
   prNumber: number;
@@ -19,25 +23,22 @@ export interface WaitForPRStatePollDeps {
   onTargetState?: (observed: ObservePRStateOutput) => void;
 }
 
-const DEFAULT_POLL_INTERVAL_MS = 30 * 1000;
-const DEFAULT_MAX_WAIT_MS = 60 * 60 * 1000;
-
 export async function pollPRState(
   input: WaitForPRStatePollOptions,
   deps: WaitForPRStatePollDeps,
 ): Promise<WaitForPRStateOutput> {
-  const timing = normalizePollTiming({
+  const timing = normalizePollTimingWithDefaults({
     nowMs: deps.now(),
-    intervalMs: input.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
-    defaultIntervalMs: DEFAULT_POLL_INTERVAL_MS,
-    maxWaitMs: input.maxWaitMs ?? DEFAULT_MAX_WAIT_MS,
+    intervalMs: input.pollIntervalMs,
+    maxWaitMs: input.maxWaitMs,
+    defaults: GITHUB_PR_STATE_POLL_DEFAULTS,
   });
   const targetStates = new Set<PRLifecycleState>(input.targetStates ?? ['CLOSED', 'MERGED']);
   let lastObserved: ObservePRStateOutput | undefined;
 
   return pollWithBudget<WaitForPRStateOutput>({
     intervalMs: timing.intervalMs,
-    defaultIntervalMs: DEFAULT_POLL_INTERVAL_MS,
+    defaultIntervalMs: GITHUB_PR_STATE_POLL_DEFAULTS.intervalMs,
     deadlineMs: timing.deadlineMs,
     now: deps.now,
     sleep: deps.sleep,
@@ -56,5 +57,5 @@ export async function pollPRState(
   });
 }
 
-export { DEFAULT_MAX_WAIT_MS as DEFAULT_PR_STATE_MAX_WAIT_MS };
-export { DEFAULT_POLL_INTERVAL_MS as DEFAULT_PR_STATE_POLL_INTERVAL_MS };
+export const DEFAULT_PR_STATE_MAX_WAIT_MS = GITHUB_PR_STATE_POLL_DEFAULTS.maxWaitMs;
+export const DEFAULT_PR_STATE_POLL_INTERVAL_MS = GITHUB_PR_STATE_POLL_DEFAULTS.intervalMs;
