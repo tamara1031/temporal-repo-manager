@@ -81,11 +81,17 @@ Hard rules:
 - No network calls. No git, no gh.
 - **No filler.** Do not write "I'll summarize this", "Here's the overview", "Sure, let me extract", or any acknowledgment line. The very first character of your reply MUST be \`{\`. No markdown fences.
 
-Output JSON schema:
+Output: EXACTLY one JSON object, nothing else.
+Required fields:
+- \`overview\`: 3-8 sentences describing what the repo does, primary language/framework, and top-level layout.
+- \`conventions\`: 0-8 short strings describing testable invariants the next steps must respect.
+- \`interfaces\`: 0-8 short strings describing stable signatures or shared types worth knowing.
+
+Example JSON output:
 {
-  "overview": string,        // 3–8 sentences: what the repo does, primary language/framework, top-level layout
-  "conventions": [string,...],  // testable invariants the next steps must respect (e.g. "all activities are pure functions", "no top-level side effects in src/", "tests live alongside source as *.test.ts"). 0–8 bullets.
-  "interfaces": [string,...]    // stable signatures or shared types worth knowing (e.g. "Activity I/O is JSON-serializable", "exports from src/activities/index.ts are the worker-registered surface"). 0–8 bullets.
+  "overview": "This repository is a TypeScript service built around Temporal workflows. Source code lives under src and tests live under tests.",
+  "conventions": ["Activities are pure functions", "Tests use Vitest"],
+  "interfaces": ["Activity input and output values are JSON-serializable"]
 }
 
 Keep each bullet under ~20 words. The artifact is reused across every subsequent codex call this run, so concision matters more than completeness.`;
@@ -103,22 +109,28 @@ Process:
 3. Decompose into **1 or 2** steps (prefer 1; only split when the work genuinely cannot land as one reviewable unit). More steps multiply downstream cost.
 4. For each step, define **at least one** \`critical_requirement\`: a testable success condition tied to system behavior (examples: "all existing unit tests still pass", "no public API surface change", "lint emits zero new warnings", "function X returns identical output for given input").
 
-Output: reply with EXACTLY one JSON object as the very first character of your reply. No prose, no markdown fences, no acknowledgments. Schema:
+Output: reply with EXACTLY one JSON object as the very first character of your reply. No prose, no markdown fences, no acknowledgments.
+Required fields:
+- \`theme\`: concise name for the refactor theme.
+- \`rationale\`: why this theme is worth doing.
+- \`steps\`: 1-2 step objects unless no worthwhile theme exists.
+- Each step has \`title\`, \`description\`, and at least one \`critical_requirements\` string.
+- Each step may include \`target_files\` with repo-relative paths the implementer is expected to modify.
+- If no worthwhile theme exists, set \`theme\` to \`no-op\`, explain why in \`rationale\`, and return an empty \`steps\` array.
+
+Example JSON output:
 {
-  "theme": string,
-  "rationale": string,
+  "theme": "shared runner cleanup",
+  "rationale": "The activities repeat Codex runner wiring, which makes timeout and parser behavior harder to keep consistent.",
   "steps": [
     {
-      "title": string,
-      "description": string,
-      "critical_requirements": [string, ...],
-      "target_files": [string, ...]   // repo-relative paths the implementer is expected to modify; omit if unknown
+      "title": "Extract shared runner helper",
+      "description": "Route refactor role activities through one internal helper while preserving their existing behavior.",
+      "critical_requirements": ["No public activity input or output types change"],
+      "target_files": ["src/activities/refactor/_internal/run-role.ts"]
     }
   ]
-}
-
-If no worthwhile theme exists (repo too small, already optimal, blocked by environment), return:
-{ "theme": "no-op", "rationale": "<why>", "steps": [] }`;
+}`;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Implementer prompt
@@ -155,6 +167,8 @@ Output: reply with a concise markdown report (the workflow stores this verbatim)
 interface PlanConcernSpec {
   label: string;
   checklist: string[];
+  example_blocking_issue: string;
+  example_suggestion: string;
   out_of_scope_reminder: string;
 }
 
@@ -168,6 +182,8 @@ const PLAN_CONCERN_SPECS: Record<PlanReviewConcern, PlanConcernSpec> = {
       'Steps are scoped realistically for one implementer session — not so broad they would require multiple large refactors',
       'No step implicitly depends on output from a future step (ordering is feasible as written)',
     ],
+    example_blocking_issue: 'Step 1 requires a package install, which is not available in this environment.',
+    example_suggestion: "Use the repository's existing test runner for verification.",
     out_of_scope_reminder:
       "Do not comment on naming quality, cohesion, or decomposition style — that is the `scope` reviewer's territory.",
   },
@@ -181,6 +197,8 @@ const PLAN_CONCERN_SPECS: Record<PlanReviewConcern, PlanConcernSpec> = {
       '`rationale` explains the value delivered, not just restates the theme',
       'The theme is not "no-op" masquerading as a real improvement',
     ],
+    example_blocking_issue: 'Step 1 combines prompt cleanup with unrelated activity timeout changes.',
+    example_suggestion: 'Split unrelated changes into a separate step or keep this plan focused on prompt cleanup.',
     out_of_scope_reminder:
       "Do not comment on feasibility, environment constraints, or whether commands exist — that is the `feasibility` reviewer's territory.",
   },
@@ -199,11 +217,17 @@ Hard rules (in addition to the global rules above):
 Concern checklist (your scope, exhaustively):
 ${spec.checklist.map((c) => `- ${c}`).join('\n')}
 
-Output: EXACTLY one JSON object, nothing else. Schema:
+Output: EXACTLY one JSON object, nothing else.
+Required fields:
+- \`verdict\`: \`ok\` or \`needs_revision\`.
+- \`blocking_issues\`: concrete issues that should block implementation, or an empty array.
+- \`suggestions\`: non-blocking improvements, or an empty array.
+
+Example JSON output:
 {
-  "verdict": "ok" | "needs_revision",
-  "blocking_issues": [string, ...],
-  "suggestions": [string, ...]
+  "verdict": "needs_revision",
+  "blocking_issues": ["${spec.example_blocking_issue}"],
+  "suggestions": ["${spec.example_suggestion}"]
 }
 
 Verdict semantics:
@@ -225,16 +249,25 @@ Hard rules (in addition to the global rules above):
 - Preserve steps that received no criticism; only revise or split steps that were flagged.
 - **No filler.** The very first character of your reply MUST be \`{\`. No markdown fences.
 
-Output: EXACTLY one JSON object with the same schema as the planner:
+Output: EXACTLY one JSON object with the same shape as the planner output.
+Required fields:
+- \`theme\`: concise name for the refactor theme.
+- \`rationale\`: why this theme is worth doing.
+- \`steps\`: 1-2 step objects unless no worthwhile theme exists.
+- Each step has \`title\`, \`description\`, and at least one \`critical_requirements\` string.
+- Each step may include \`target_files\` with repo-relative paths the implementer is expected to modify.
+- If no worthwhile theme exists, set \`theme\` to \`no-op\`, explain why in \`rationale\`, and return an empty \`steps\` array.
+
+Example JSON output:
 {
-  "theme": string,
-  "rationale": string,
+  "theme": "shared runner cleanup",
+  "rationale": "The revised plan keeps the original theme while narrowing the implementation to one reviewable helper extraction.",
   "steps": [
     {
-      "title": string,
-      "description": string,
-      "critical_requirements": [string, ...],
-      "target_files": [string, ...]   // repo-relative paths the implementer is expected to modify; omit if unknown
+      "title": "Extract shared runner helper",
+      "description": "Route refactor role activities through one internal helper while preserving their existing behavior.",
+      "critical_requirements": ["No public activity input or output types change"],
+      "target_files": ["src/activities/refactor/_internal/run-role.ts"]
     }
   ]
 }`;
@@ -247,6 +280,8 @@ interface ConcernSpec {
   label: string;
   checklist: string[];
   critical_examples: string;
+  example_blocking_issue: string;
+  example_suggestion: string;
   out_of_scope_reminder: string;
 }
 
@@ -265,6 +300,8 @@ const CONCERN_SPECS: Record<ReviewConcern, ConcernSpec> = {
     ],
     critical_examples:
       '(credential leak, injection, auth bypass, broken trust boundary, public API made strictly worse, tests removed without replacement)',
+    example_blocking_issue: 'The diff removes coverage for the parser error path without adding an equivalent test.',
+    example_suggestion: 'Add a focused unit test for malformed JSON output.',
     out_of_scope_reminder:
       "Do not comment on style, naming, performance, or cost — that is the `quality` reviewer's territory.",
   },
@@ -283,6 +320,8 @@ const CONCERN_SPECS: Record<ReviewConcern, ConcernSpec> = {
     ],
     critical_examples:
       '(severe regression on a hot path, runaway-cost risk, or a diff so unclear it is actively misleading future readers — use sparingly)',
+    example_blocking_issue: 'The new helper name hides that it mutates the plan before validation.',
+    example_suggestion: 'Rename the helper to describe the mutation it performs.',
     out_of_scope_reminder:
       "Do not comment on security, type safety, tests, or error handling — that is the `correctness` reviewer's territory.",
   },
@@ -301,11 +340,17 @@ Hard rules (in addition to the global rules above):
 Concern checklist (your scope, exhaustively):
 ${spec.checklist.map((c) => `- ${c}`).join('\n')}
 
-Output: EXACTLY one JSON object, nothing else. Schema:
+Output: EXACTLY one JSON object, nothing else.
+Required fields:
+- \`verdict\`: \`ok\`, \`needs_revision\`, or \`critical_block\`.
+- \`blocking_issues\`: concrete issues for the implementer or workflow to address, or an empty array.
+- \`suggestions\`: non-blocking improvements, or an empty array.
+
+Example JSON output:
 {
-  "verdict": "ok" | "needs_revision" | "critical_block",
-  "blocking_issues": [string, ...],
-  "suggestions": [string, ...]
+  "verdict": "needs_revision",
+  "blocking_issues": ["${spec.example_blocking_issue}"],
+  "suggestions": ["${spec.example_suggestion}"]
 }
 
 Verdict semantics:
