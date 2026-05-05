@@ -16,3 +16,54 @@ export function nextPollSleepMs(
   }
   return Math.min(intervalMs, remainingMs);
 }
+
+export type PollStepResult<T> =
+  | { done: true; value: T }
+  | { done: false };
+
+export interface PollWithBudgetOptions<T> {
+  intervalMs: number;
+  defaultIntervalMs: number;
+  deadlineMs: number | ((normalizedIntervalMs: number) => number);
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+  observe: () => Promise<PollStepResult<T>>;
+  onTimeout: () => T;
+  maxAttempts?: number;
+  observeAtDeadline?: boolean;
+}
+
+export async function pollWithBudget<T>(options: PollWithBudgetOptions<T>): Promise<T> {
+  const intervalMs = normalizePollIntervalMs(options.intervalMs, options.defaultIntervalMs);
+  const deadlineMs =
+    typeof options.deadlineMs === 'function' ? options.deadlineMs(intervalMs) : options.deadlineMs;
+  const maxAttempts =
+    options.maxAttempts === undefined
+      ? undefined
+      : Math.max(1, Math.floor(options.maxAttempts));
+  let attempts = 0;
+
+  while (maxAttempts === undefined || attempts < maxAttempts) {
+    if (!options.observeAtDeadline && options.now() >= deadlineMs) {
+      return options.onTimeout();
+    }
+
+    attempts += 1;
+    const result = await options.observe();
+    if (result.done) {
+      return result.value;
+    }
+
+    if (maxAttempts !== undefined && attempts >= maxAttempts) {
+      return options.onTimeout();
+    }
+
+    const sleepMs = nextPollSleepMs(deadlineMs, options.now(), intervalMs);
+    if (sleepMs === undefined) {
+      return options.onTimeout();
+    }
+    await options.sleep(sleepMs);
+  }
+
+  return options.onTimeout();
+}
