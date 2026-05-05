@@ -28,6 +28,62 @@ const step: PlanStep = {
   critical_requirements: ['existing activity I/O types stay unchanged'],
 };
 
+type PromptExampleCase = [string, () => string];
+
+function extractExampleJsonText(prompt: string): string {
+  const marker = 'Example JSON output:\n';
+  const start = prompt.indexOf(marker);
+  expect(start).toBeGreaterThanOrEqual(0);
+
+  const jsonStart = prompt.indexOf('{', start + marker.length);
+  expect(jsonStart).toBeGreaterThanOrEqual(0);
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = jsonStart; i < prompt.length; i += 1) {
+    const char = prompt[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escaped = inString;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return prompt.slice(jsonStart, i + 1);
+      }
+    }
+  }
+
+  throw new Error('Example JSON object was not closed');
+}
+
+function expectValidExampleJson(prompt: string): void {
+  const exampleJson = extractExampleJsonText(prompt);
+
+  expect(JSON.parse(exampleJson)).toEqual(expect.any(Object));
+  expect(exampleJson).not.toMatch(/\[string,\s*\.\.\.\]|\[string,\.\.\.\]/);
+  expect(exampleJson).not.toContain('//');
+}
+
 describe('refactor role Codex runner', () => {
   beforeEach(() => {
     runCodexExecMock.mockReset();
@@ -122,7 +178,7 @@ describe('refactor role Codex runner', () => {
     });
   });
 
-  it('documents target_files in the plan-refiner schema and preserves parser coercion', async () => {
+  it('documents target_files in the plan-refiner prompt and preserves parser coercion', async () => {
     runCodexExecMock.mockResolvedValueOnce({
       lastMessage: JSON.stringify({
         theme: 'shared runner',
@@ -153,9 +209,8 @@ describe('refactor role Codex runner', () => {
       rationale: 'keeps timeout handling consistent',
       steps: [step],
     }, ['add expected file scope']);
-    expect(prompt).toContain(
-      '"target_files": [string, ...]   // repo-relative paths the implementer is expected to modify; omit if unknown',
-    );
+    expect(prompt).toContain('Each step may include `target_files` with repo-relative paths');
+    expectValidExampleJson(prompt);
     expect(result.steps[0].target_files).toEqual([
       'src/activities/refactor/_internal/prompts.ts',
     ]);
@@ -164,6 +219,47 @@ describe('refactor role Codex runner', () => {
       prompt,
       timeoutMs: 5 * 60 * 1000,
     });
+  });
+});
+
+describe('refactor JSON-output prompt examples', () => {
+  const plan: PlanOutput = {
+    theme: 'test coverage',
+    rationale: 'improve reliability',
+    steps: [step],
+  };
+
+  const promptExampleCases: PromptExampleCase[] = [
+    ['context', () => PROMPTS.context],
+    ['planner', () => PROMPTS.plan(contextArtifact, 'reduce repeated codex wiring')],
+    ['plan reviewer feasibility', () => PROMPTS.reviewPlan(contextArtifact, 'feasibility', plan)],
+    ['plan reviewer scope', () => PROMPTS.reviewPlan(contextArtifact, 'scope', plan)],
+    ['plan refiner', () => PROMPTS.refinePlan(contextArtifact, plan, ['tighten file scope'])],
+    ['reviewer correctness', () => PROMPTS.review(contextArtifact, 'correctness', step, '- old line\n+ new line')],
+    ['reviewer quality', () => PROMPTS.review(contextArtifact, 'quality', step, '- old line\n+ new line')],
+  ];
+
+  it.each(promptExampleCases)('contains a parseable example JSON object for %s', (_name, buildPrompt) => {
+    expectValidExampleJson(buildPrompt());
+  });
+
+  it('keeps concern-specific plan reviewer examples within concern scope', () => {
+    const feasibilityPrompt = PROMPTS.reviewPlan(contextArtifact, 'feasibility', plan);
+    const scopePrompt = PROMPTS.reviewPlan(contextArtifact, 'scope', plan);
+
+    expect(feasibilityPrompt).toContain('requires a package install');
+    expect(scopePrompt).toContain('combines prompt cleanup with unrelated activity timeout changes');
+    expect(scopePrompt).not.toContain('requires a package install');
+  });
+
+  it('keeps concern-specific implementation reviewer examples within concern scope', () => {
+    const correctnessPrompt = PROMPTS.review(contextArtifact, 'correctness', step, '- old line\n+ new line');
+    const qualityPrompt = PROMPTS.review(contextArtifact, 'quality', step, '- old line\n+ new line');
+
+    expect(correctnessPrompt).toContain('parser error path');
+    expect(qualityPrompt).toContain('helper name hides');
+    expect(qualityPrompt).not.toContain('parser error path');
+    expect(qualityPrompt).not.toContain('malformed JSON');
   });
 });
 
