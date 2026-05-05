@@ -19,7 +19,7 @@ import { log } from '@temporalio/workflow';
 import { planCodex } from '../proxies';
 import type { ContextArtifact, DesignPhaseRecord, DesignRound, PlanOutput, PlanReviewConcern } from '../../activities/refactor';
 import type { SpawnCounter } from './spawn-budget';
-import { collectFeedback } from './feedback';
+import { collectFeedback, summarizeReviews } from './feedback';
 import { plansEqual } from './plan-equality';
 
 export interface DesignPhaseConfig {
@@ -105,11 +105,7 @@ export async function runDesignPhase(input: DesignPhaseLoopInput): Promise<Desig
 
     const round: DesignRound = {
       iter,
-      reviews: reviews.map((r, i) => ({
-        concern: reviewerConcerns[i],
-        verdict: r.verdict,
-        bullets: [...r.blocking_issues, ...r.suggestions].slice(0, 3),
-      })),
+      reviews: summarizeReviews(reviews, reviewerConcerns),
     };
     record.rounds.push(round);
 
