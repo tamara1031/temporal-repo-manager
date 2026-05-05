@@ -35,7 +35,7 @@ import type {
   ReviewConcern,
 } from '../../activities/refactor';
 import { arraysEqual, diffPorcelain } from './porcelain';
-import { collectFeedback } from './feedback';
+import { collectFeedback, summarizeReviews } from './feedback';
 import { AdvisorBudget, consultAdvisor, type AdvisorAuditEntry } from './advisor';
 import type { StepRecord } from './refactor-report';
 import type { SpawnCounter } from './spawn-budget';
@@ -286,11 +286,7 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
     // 6. Aggregate
     record.parliamentSummary.push({
       iter,
-      reviews: reviews.map((r, i) => ({
-        concern: reviewerConcerns[i],
-        verdict: r.verdict,
-        bullets: [...r.blocking_issues, ...r.suggestions].slice(0, 3),
-      })),
+      reviews: summarizeReviews(reviews, reviewerConcerns),
     });
 
     const blocker = reviews.findIndex((r) => r.verdict === 'critical_block');
