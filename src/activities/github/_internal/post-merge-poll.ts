@@ -1,5 +1,5 @@
 import type { PRLifecycleState } from '../observe-pr-state';
-import { nextPollSleepMs, normalizePollIntervalMs } from './polling-budget';
+import { pollWithBudget } from './polling-budget';
 
 export type PostMergeOutcome = 'merged' | 'merge-queued' | 'closed-externally';
 
@@ -32,32 +32,32 @@ export async function pollPostMergeOutcome(
     1,
     Math.floor(input.maxPollAttempts ?? DEFAULT_POST_MERGE_POLL_ATTEMPTS),
   );
-  const intervalMs = normalizePollIntervalMs(
-    Math.floor(input.pollIntervalMs ?? DEFAULT_POST_MERGE_POLL_INTERVAL_MS),
-    DEFAULT_POST_MERGE_POLL_INTERVAL_MS,
-  );
-  const configuredWaitMs = attempts * intervalMs;
+  const intervalMs = Math.floor(input.pollIntervalMs ?? DEFAULT_POST_MERGE_POLL_INTERVAL_MS);
   const maxActivityWaitMs = Math.max(
     0,
     Math.floor(input.maxActivityWaitMs ?? MAX_POST_MERGE_ACTIVITY_WAIT_MS),
   );
-  const deadlineMs = deps.now() + Math.min(configuredWaitMs, maxActivityWaitMs);
 
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    const observed = await deps.observe();
-    const outcome = mapPostMergeStateToOutcome(observed.state, false);
-    if (outcome && outcome !== 'merge-queued') {
-      deps.onTerminalOutcome?.(outcome, observed);
-      return outcome;
-    }
-
-    if (attempt >= attempts) break;
-    const sleepMs = nextPollSleepMs(deadlineMs, deps.now(), intervalMs);
-    if (sleepMs === undefined) break;
-    await deps.sleep(sleepMs);
-  }
-
-  return 'merge-queued';
+  return pollWithBudget<PostMergeOutcome>({
+    intervalMs,
+    defaultIntervalMs: DEFAULT_POST_MERGE_POLL_INTERVAL_MS,
+    deadlineMs: (normalizedIntervalMs) =>
+      deps.now() + Math.min(attempts * normalizedIntervalMs, maxActivityWaitMs),
+    now: deps.now,
+    sleep: deps.sleep,
+    maxAttempts: attempts,
+    observeAtDeadline: true,
+    observe: async () => {
+      const observed = await deps.observe();
+      const outcome = mapPostMergeStateToOutcome(observed.state, false);
+      if (outcome && outcome !== 'merge-queued') {
+        deps.onTerminalOutcome?.(outcome, observed);
+        return { done: true, value: outcome };
+      }
+      return { done: false };
+    },
+    onTimeout: () => 'merge-queued',
+  });
 }
 
 export function mapPostMergeStateToOutcome(

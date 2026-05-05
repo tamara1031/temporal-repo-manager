@@ -5,7 +5,7 @@ import {
   type CompletedCIDecision,
   type RollupSnapshot,
 } from './ci-rollup';
-import { nextPollSleepMs, normalizePollIntervalMs } from './polling-budget';
+import { pollWithBudget } from './polling-budget';
 
 export interface CIResult {
   status: 'success' | 'failure' | 'timeout' | 'closed' | 'merged';
@@ -42,53 +42,51 @@ export async function pollCIStatus(
   input: WaitForCIPollOptions,
   deps: WaitForCIPollDeps,
 ): Promise<CIResult> {
-  const interval = normalizePollIntervalMs(
-    (input.pollIntervalSeconds ?? DEFAULT_CI_POLL_INTERVAL_MS / 1000) * 1000,
-    DEFAULT_CI_POLL_INTERVAL_MS,
-  );
   const minStabilizationMs = (input.minSuccessStabilizationSeconds ?? 60) * 1000;
   const deadline = deps.now() + (input.maxWaitSeconds ?? 60 * 60) * 1000;
   let stabilization: RollupSnapshot | undefined;
 
-  while (deps.now() < deadline) {
-    const observed = await deps.observe();
-    if (observed.state === 'CLOSED') {
-      deps.onExternallyClosed?.();
-      return { status: 'closed', failedRunIds: [], failedJobNames: [] };
-    }
-    if (observed.state === 'MERGED') {
-      deps.onExternallyMerged?.();
-      return { status: 'merged', failedRunIds: [], failedJobNames: [] };
-    }
-
-    const checks = parseStatusCheckRollupJSON(observed.checksJson);
-    const decision = decideCIStatus(checks);
-
-    if (decision.status === 'failure') {
-      return toCIResult(decision);
-    }
-
-    if (decision.status === 'success') {
-      const stab = evaluateStabilization(stabilization, checks, deps.now(), minStabilizationMs);
-      if (stab.kind === 'settle') {
-        if (checks.length === 0) {
-          deps.onNoChecksSettled?.(minStabilizationMs / 1000);
-        }
-        return toCIResult(decision);
+  return pollWithBudget<CIResult>({
+    intervalMs: (input.pollIntervalSeconds ?? DEFAULT_CI_POLL_INTERVAL_MS / 1000) * 1000,
+    defaultIntervalMs: DEFAULT_CI_POLL_INTERVAL_MS,
+    deadlineMs: deadline,
+    now: deps.now,
+    sleep: deps.sleep,
+    observe: async () => {
+      const observed = await deps.observe();
+      if (observed.state === 'CLOSED') {
+        deps.onExternallyClosed?.();
+        return { done: true, value: { status: 'closed', failedRunIds: [], failedJobNames: [] } };
       }
-      stabilization = stab.next;
-    } else {
-      stabilization = undefined;
-    }
+      if (observed.state === 'MERGED') {
+        deps.onExternallyMerged?.();
+        return { done: true, value: { status: 'merged', failedRunIds: [], failedJobNames: [] } };
+      }
 
-    const sleepMs = nextPollSleepMs(deadline, deps.now(), interval);
-    if (sleepMs === undefined) {
-      break;
-    }
-    await deps.sleep(sleepMs);
-  }
+      const checks = parseStatusCheckRollupJSON(observed.checksJson);
+      const decision = decideCIStatus(checks);
 
-  return { status: 'timeout', failedRunIds: [], failedJobNames: [] };
+      if (decision.status === 'failure') {
+        return { done: true, value: toCIResult(decision) };
+      }
+
+      if (decision.status === 'success') {
+        const stab = evaluateStabilization(stabilization, checks, deps.now(), minStabilizationMs);
+        if (stab.kind === 'settle') {
+          if (checks.length === 0) {
+            deps.onNoChecksSettled?.(minStabilizationMs / 1000);
+          }
+          return { done: true, value: toCIResult(decision) };
+        }
+        stabilization = stab.next;
+      } else {
+        stabilization = undefined;
+      }
+
+      return { done: false };
+    },
+    onTimeout: () => ({ status: 'timeout', failedRunIds: [], failedJobNames: [] }),
+  });
 }
 
 function toCIResult(decision: CompletedCIDecision): CIResult {
