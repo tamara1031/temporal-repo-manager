@@ -40,10 +40,6 @@ import { AdvisorBudget, consultAdvisor, type AdvisorAuditEntry } from './advisor
 import type { CircuitBreaker, StepRecord } from './step-types';
 import type { SpawnCounter } from './spawn-budget';
 
-// Re-exported so consumers that import CircuitBreaker from this module continue
-// to work without changes. The canonical definition lives in step-types.ts.
-export type { CircuitBreaker } from './step-types';
-
 export type StepLoopResult =
   | { kind: 'completed'; record: StepRecord }
   | { kind: 'budget-halted' }

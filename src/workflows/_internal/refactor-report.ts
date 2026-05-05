@@ -22,10 +22,6 @@ import type {
 import type { AdvisorAuditEntry } from './advisor';
 import type { CircuitBreaker, StepRecord } from './step-types';
 
-// Re-exported for backward compatibility — the canonical definitions are in
-// step-types.ts.  Prefer importing from there in new code.
-export type { StepRecord, ParliamentSummary } from './step-types';
-
 export interface ReportInput {
   plan: PlanOutput;
   droppedFromPlan: PlanStep[];
