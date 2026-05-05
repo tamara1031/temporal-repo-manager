@@ -5,6 +5,52 @@ export function normalizePollIntervalMs(intervalMs: number, defaultIntervalMs: n
   return Number.isFinite(defaultIntervalMs) && defaultIntervalMs > 0 ? defaultIntervalMs : 1;
 }
 
+export interface PollTimingOptions {
+  nowMs: number;
+  intervalMs: number;
+  defaultIntervalMs: number;
+  maxWaitMs: number;
+}
+
+export interface PollTiming {
+  intervalMs: number;
+  deadlineMs: number;
+}
+
+export function normalizePollTiming(options: PollTimingOptions): PollTiming {
+  return {
+    intervalMs: normalizePollIntervalMs(options.intervalMs, options.defaultIntervalMs),
+    deadlineMs: options.nowMs + options.maxWaitMs,
+  };
+}
+
+export interface AttemptPollTimingOptions {
+  nowMs: number;
+  intervalMs: number;
+  defaultIntervalMs: number;
+  attempts: number;
+  maxWaitMs: number;
+}
+
+export function normalizeAttemptPollTiming(options: AttemptPollTimingOptions): PollTiming {
+  const intervalMs = normalizePollIntervalMs(options.intervalMs, options.defaultIntervalMs);
+  return {
+    intervalMs,
+    deadlineMs: options.nowMs + Math.min(options.attempts * intervalMs, options.maxWaitMs),
+  };
+}
+
+export function normalizePollAttempts(attempts: number | undefined, defaultAttempts: number): number {
+  return Math.max(1, Math.floor(attempts ?? defaultAttempts));
+}
+
+export function normalizeNonNegativePollWaitMs(
+  waitMs: number | undefined,
+  defaultWaitMs: number,
+): number {
+  return Math.max(0, Math.floor(waitMs ?? defaultWaitMs));
+}
+
 export function nextPollSleepMs(
   deadlineMs: number,
   nowMs: number,

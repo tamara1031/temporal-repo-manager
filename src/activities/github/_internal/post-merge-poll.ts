@@ -1,5 +1,10 @@
 import type { PRLifecycleState } from '../observe-pr-state';
-import { pollWithBudget } from './polling-budget';
+import {
+  normalizeAttemptPollTiming,
+  normalizeNonNegativePollWaitMs,
+  normalizePollAttempts,
+  pollWithBudget,
+} from './polling-budget';
 
 export type PostMergeOutcome = 'merged' | 'merge-queued' | 'closed-externally';
 
@@ -28,21 +33,26 @@ export async function pollPostMergeOutcome(
   input: PostMergePollOptions,
   deps: PostMergePollDeps,
 ): Promise<PostMergeOutcome> {
-  const attempts = Math.max(
-    1,
-    Math.floor(input.maxPollAttempts ?? DEFAULT_POST_MERGE_POLL_ATTEMPTS),
+  const attempts = normalizePollAttempts(
+    input.maxPollAttempts,
+    DEFAULT_POST_MERGE_POLL_ATTEMPTS,
   );
-  const intervalMs = Math.floor(input.pollIntervalMs ?? DEFAULT_POST_MERGE_POLL_INTERVAL_MS);
-  const maxActivityWaitMs = Math.max(
-    0,
-    Math.floor(input.maxActivityWaitMs ?? MAX_POST_MERGE_ACTIVITY_WAIT_MS),
+  const maxActivityWaitMs = normalizeNonNegativePollWaitMs(
+    input.maxActivityWaitMs,
+    MAX_POST_MERGE_ACTIVITY_WAIT_MS,
   );
+  const timing = normalizeAttemptPollTiming({
+    nowMs: deps.now(),
+    intervalMs: Math.floor(input.pollIntervalMs ?? DEFAULT_POST_MERGE_POLL_INTERVAL_MS),
+    defaultIntervalMs: DEFAULT_POST_MERGE_POLL_INTERVAL_MS,
+    attempts,
+    maxWaitMs: maxActivityWaitMs,
+  });
 
   return pollWithBudget<PostMergeOutcome>({
-    intervalMs,
+    intervalMs: timing.intervalMs,
     defaultIntervalMs: DEFAULT_POST_MERGE_POLL_INTERVAL_MS,
-    deadlineMs: (normalizedIntervalMs) =>
-      deps.now() + Math.min(attempts * normalizedIntervalMs, maxActivityWaitMs),
+    deadlineMs: timing.deadlineMs,
     now: deps.now,
     sleep: deps.sleep,
     maxAttempts: attempts,
