@@ -51,6 +51,10 @@ export interface DesignPhaseLoopInput {
   config: DesignPhaseConfig;
 }
 
+function isNoOpPlan(plan: PlanOutput): boolean {
+  return plan.theme === 'no-op' || plan.steps.length === 0;
+}
+
 export async function runDesignPhase(input: DesignPhaseLoopInput): Promise<DesignPhaseLoopResult> {
   const { workdir, contextArtifact, brief, spawnCounter, config } = input;
   const { maxRounds, reviewerConcerns } = config;
@@ -71,7 +75,7 @@ export async function runDesignPhase(input: DesignPhaseLoopInput): Promise<Desig
 
   const record: DesignPhaseRecord = { rounds: [], outcome: 'single-shot', iters: 0 };
 
-  if (plan.theme === 'no-op' || plan.steps.length === 0) {
+  if (isNoOpPlan(plan)) {
     return { outcome: 'no-op', plan, record };
   }
 
@@ -130,6 +134,10 @@ export async function runDesignPhase(input: DesignPhaseLoopInput): Promise<Desig
       log.warn('plan refiner failed; accepting pre-refinement plan', { iter, err: String(err) });
       record.outcome = 'max-rounds';
       break;
+    }
+
+    if (isNoOpPlan(plan)) {
+      return { outcome: 'no-op', plan, record };
     }
 
     if (plansEqual(planBefore, plan)) {
