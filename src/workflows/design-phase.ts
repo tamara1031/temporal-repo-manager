@@ -24,8 +24,6 @@ import {
 
 export { DEFAULT_DESIGN_PHASE_CONFIG, type DesignPhaseConfig } from './_internal/design-phase-loop';
 
-export type DesignPhaseOutcome = 'completed' | 'no-op' | 'plan-failed' | 'budget-exhausted';
-
 export interface DesignPhaseInput {
   workdir: string;
   contextArtifact: ContextArtifact;
@@ -35,13 +33,22 @@ export interface DesignPhaseInput {
   config: DesignPhaseConfig;
 }
 
-export interface DesignPhaseOutput {
-  outcome: DesignPhaseOutcome;
-  plan?: PlanOutput;
-  designRecord?: DesignPhaseRecord;
-  /** Codex spawns consumed, broken down by role. */
-  spawnCounts: SpawnCounts;
-}
+/**
+ * Discriminated union mirroring the internal `DesignPhaseLoopResult` shape,
+ * with `spawnCounts` added to every variant. Using a discriminated union (rather
+ * than an optional-field interface) means callers never need a `!` assertion:
+ * TypeScript narrows `plan` and `designRecord` as present once `outcome` is
+ * checked to be `'completed'` or `'no-op'`. Parallels the pattern established
+ * for `RefactorStepOutput`.
+ */
+export type DesignPhaseOutput =
+  | { outcome: 'completed'; plan: PlanOutput; designRecord: DesignPhaseRecord; spawnCounts: SpawnCounts }
+  | { outcome: 'no-op'; plan: PlanOutput; designRecord: DesignPhaseRecord; spawnCounts: SpawnCounts }
+  | { outcome: 'plan-failed'; spawnCounts: SpawnCounts }
+  | { outcome: 'budget-exhausted'; spawnCounts: SpawnCounts };
+
+/** All possible outcomes for a design phase run, derived from the output union. */
+export type DesignPhaseOutcome = DesignPhaseOutput['outcome'];
 
 export async function designPhaseWorkflow(input: DesignPhaseInput): Promise<DesignPhaseOutput> {
   const spawnCounter = new SpawnCounter(input.spawnBudget);
@@ -63,13 +70,14 @@ export async function designPhaseWorkflow(input: DesignPhaseInput): Promise<Desi
 
   log.info('designPhaseWorkflow done', { outcome: result.outcome, spawnCounts });
 
-  if (result.outcome === 'plan-failed' || result.outcome === 'budget-exhausted') {
-    return { outcome: result.outcome, spawnCounts };
+  if (result.outcome === 'plan-failed') {
+    return { outcome: 'plan-failed', spawnCounts };
   }
-  return {
-    outcome: result.outcome,
-    plan: result.plan,
-    designRecord: result.record,
-    spawnCounts,
-  };
+  if (result.outcome === 'budget-exhausted') {
+    return { outcome: 'budget-exhausted', spawnCounts };
+  }
+  if (result.outcome === 'no-op') {
+    return { outcome: 'no-op', plan: result.plan, designRecord: result.record, spawnCounts };
+  }
+  return { outcome: 'completed', plan: result.plan, designRecord: result.record, spawnCounts };
 }
