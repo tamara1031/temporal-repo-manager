@@ -28,10 +28,7 @@ Temporal Schedule ──▶ periodicRefactorWorkflow
 .
 ├── Dockerfile                       # Go binary + gh CLI + codex CLI (Node runtime for codex)
 ├── docker-compose.yml               # Local dev: Temporal dev server + worker
-├── deploy/k8s/worker-deployment.yaml# Kubernetes Deployment manifest
 ├── .env.example                     # Worker env var template
-├── scripts/
-│   └── schedule-setup.sh            # temporal schedule create --upsert
 ├── cmd/
 │   └── main.go                      # Worker entry point; registers workflows + activities
 ├── internal/
@@ -74,7 +71,7 @@ go build -o repo-steward ./cmd
 ./repo-steward
 
 # 5. Install the schedule (or set REGISTER_SCHEDULE=true before step 4)
-bash scripts/schedule-setup.sh
+REGISTER_SCHEDULE=true TARGET_REPO=owner/repo REFACTOR_BRIEF="..." ./repo-steward
 
 # 6. Run tests
 go test ./...

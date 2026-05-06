@@ -168,12 +168,20 @@ Look for `401 Unauthorized` in the Temporal Web UI failure history when diagnosi
 
 ## Schedule setup
 
-Run `scripts/schedule-setup.sh` from a Worker pod or an admin machine that can reach the Temporal cluster. It upserts a `periodicRefactorWorkflow` Schedule.
+Create or upsert the schedule from a machine that can reach the Temporal cluster:
 
 ```bash
-TEMPORAL_ADDRESS=temporal-frontend.temporal.svc.cluster.local:7233 \
-TEMPORAL_NAMESPACE=default \
-AGENT_REPO=<owner>/<repo> \
-AGENT_BASE_BRANCH=main \
-./scripts/schedule-setup.sh
+temporal schedule create \
+  --address temporal-frontend.temporal.svc.cluster.local:7233 \
+  --namespace default \
+  --schedule-id periodic-refactor-<owner>__<repo> \
+  --workflow-id periodic-refactor-<owner>__<repo> \
+  --workflow-type PeriodicRefactorWorkflow \
+  --task-queue repo-steward \
+  --cron "0 3 * * 1" \
+  --overlap-policy Skip \
+  --input '{"RepoFullName":"<owner>/<repo>","BaseBranch":"main","Brief":"<your brief>","PRTitle":"chore: automated refactor","PRBody":"Automated refactoring pass.","AutoMerge":true}' \
+  --upsert
 ```
+
+Alternatively, set `REGISTER_SCHEDULE=true` (with `TARGET_REPO`, `REFACTOR_BRIEF`, etc.) before starting the worker binary and it will upsert the schedule on startup.
