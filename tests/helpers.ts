@@ -180,6 +180,7 @@ export function makeMockActivities(
     diffTextActivity: record('diffTextActivity', async () => ({
       text: 'diff --git a/src/foo.ts b/src/foo.ts\n@@ stub diff @@',
       truncated: false,
+      contentHash: 'stub-hash-abc123',
     })),
     statusPorcelainActivity: record('statusPorcelainActivity', async () => ({
       entries: [' M src/foo.ts'],
