@@ -1,8 +1,7 @@
 # Temporal repo-steward worker — Kubernetes Deployment
 #
-# The worker container spawns `codex app-server` as an in-process child on
-# startup (src/worker.ts → startCodexAppServerProcess).  No sidecar needed —
-# auth.json is mounted directly in the worker container.
+# The worker runs the Go binary which shells out to the codex CLI (Node.js).
+# No sidecar needed — auth.json is mounted directly in the worker container.
 #
 # Secrets required
 # ----------------

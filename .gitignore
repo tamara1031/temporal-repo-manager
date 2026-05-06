@@ -10,16 +10,6 @@ credentials*.json
 # --- APM dependencies ---
 apm_modules/
 
-# --- node / TS build ---
-node_modules/
-dist/
-*.tsbuildinfo
-
-# --- test / coverage artifacts ---
-coverage/
-.vitest/
-.nyc_output/
-
 # --- editor / OS ---
 .vscode/
 .idea/

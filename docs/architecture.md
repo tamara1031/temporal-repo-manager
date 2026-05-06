@@ -31,119 +31,39 @@ flowchart LR
 
 ## Activity directory structure
 
-`src/activities/` follows a **one file = one Activity** rule. Helpers shared across Activities live in `_internal/` and are not re-exported from `activities/index.ts`. Clusters are split by concern and nested as needed.
+Activities are grouped by concern under `internal/activity/`. Each group is a Go package with an `Activities` struct whose methods are registered with the Temporal worker.
 
 ```
-src/activities/
-├── index.ts                       # Barrel — Activities registered with the Worker
-├── _internal/                     # Cross-cluster shared helpers (not Activities)
-│   ├── exec.ts                    # Child-process spawner (heartbeat + cancellation)
-│   ├── run-codex.ts               # codex transport selector + rate-limit detection
-│   ├── run-codex-app-server.ts    # WebSocket JSON-RPC 2.0 client for codex app-server
-│   └── codex-app-server-process.ts# In-process codex app-server lifecycle manager
-│
-├── advisor/                       # Upper-model consult
-│   └── advisor.ts                 # consultAdvisorActivity
-│
-├── codex/                         # Generic single-shot codex
-│   └── codex.ts                   # codexActivity (CI self-heal / conflict resolution)
-│
-├── git/                           # Workspace + git plumbing
-│   ├── _internal/
-│   │   └── git-env.ts             # ghAuthEnv / ref helpers
-│   ├── clone.ts                   # cloneRepoActivity
-│   ├── commit.ts                  # commitAllActivity
-│   ├── push.ts                    # pushBranchActivity
-│   ├── check-conflict.ts          # checkConflictActivity
-│   ├── cleanup.ts                 # cleanupWorkspaceActivity
-│   ├── diff-stat.ts               # diffStatActivity (Pre-Parliament gate)
-│   ├── diff-text.ts               # diffTextActivity (reviewer input)
-│   ├── status-porcelain.ts        # statusPorcelainActivity (drift baseline)
-│   └── restore.ts                 # restoreActivity (rollback / drift revert)
-│
-├── github/                        # gh CLI
-│   ├── _internal/
-│   │   ├── gh-env.ts              # ghEnv + sleepCancellable
-│   │   ├── gh-json.ts             # JSON error types
-│   │   ├── ci-rollup.ts           # statusCheckRollup interpretation
-│   │   └── pr-view.ts             # gh pr view response parser
-│   ├── create-pr.ts               # createPRActivity
-│   ├── wait-for-ci.ts             # waitForCIActivity (statusCheckRollup + state polling)
-│   ├── fetch-failed-logs.ts       # fetchFailedRunLogsActivity
-│   ├── merge-pr.ts                # mergePRActivity (--auto)
-│   └── observe-pr-state.ts        # observePRStateActivity (pre-merge gate / post-merge poll)
-│
-└── refactor/                      # Role-specific codex Activities
-    ├── _internal/
-    │   ├── types.ts               # ContextArtifact / PlanStep / etc.
-    │   ├── prompts.ts             # Role prompts (static prefix / dynamic suffix)
-    │   └── parsers.ts             # JSON parsers (extract / plan / review)
-    ├── extract-context.ts         # extractContextArtifactActivity
-    ├── plan.ts                    # planActivity
-    ├── implement.ts               # implementActivity
-    └── review.ts                  # reviewActivity
+internal/
+├── activity/
+│   ├── codex/activities.go      # DesignActivity, ImplementActivity, ReviewActivity,
+│   │                            #   ChatActivity, ConsultAdvisorActivity
+│   ├── git/activities.go        # CloneRepoActivity, CommitAllActivity, PushBranchActivity,
+│   │                            #   StatusPorcelainActivity, DiffStatActivity,
+│   │                            #   RestoreActivity, CleanupWorkspaceActivity,
+│   │                            #   CheckConflictActivity
+│   └── github/activities.go     # CreatePRActivity, WaitForCIActivity,
+│                                #   FetchFailedRunLogsActivity, MergePRActivity,
+│                                #   ObservePRStateActivity
+├── codex/client.go              # codex CLI subprocess wrapper (RunOptions → stdout)
+├── errors/errors.go             # Typed ApplicationFailures (nonRetryable sentinels)
+├── workflow/
+│   ├── periodic.go              # PeriodicRefactorWorkflow (orchestrator)
+│   ├── design_phase.go          # DesignPhaseWorkflow (plan → review loop)
+│   ├── refactor_step.go         # RefactorStepWorkflow (implement → review loop)
+│   └── pr_lifecycle.go          # RobustPRMergeWorkflow (push → CI → merge)
+└── workspace/
+    ├── manager.go               # GetOrCreate / Session (thread-safe session map)
+    └── session.go               # WorkDir / Branch per session
 ```
-
-### Cluster dependencies
-
-```mermaid
-flowchart TB
-    subgraph shared["_internal (cross-cluster)"]
-        Exec[exec.ts]
-        RunCodex["run-codex.ts<br/>(transport selector + rate-limit)"]
-        AppServer["run-codex-app-server.ts<br/>(WebSocket JSON-RPC client)"]
-        ProcMgr["codex-app-server-process.ts<br/>(in-process lifecycle)"]
-    end
-
-    subgraph advisor_cluster["advisor/"]
-        AdvAct[consultAdvisorActivity]
-    end
-
-    subgraph codex_cluster["codex/"]
-        CodexAct[codexActivity]
-    end
-
-    subgraph git_cluster["git/"]
-        GitEnv["_internal/git-env"]
-        GitActs["clone / commit / push / check-conflict /<br/>cleanup / diff-stat / diff-text /<br/>status-porcelain / restore"]
-    end
-
-    subgraph github_cluster["github/"]
-        GhInternals["_internal<br/>(gh-env / gh-json / ci-rollup / pr-view)"]
-        GhActs["create-pr / wait-for-ci /<br/>fetch-failed-logs / merge-pr /<br/>observe-pr-state"]
-    end
-
-    subgraph refactor_cluster["refactor/"]
-        RefInternals["_internal<br/>(types / prompts / parsers)"]
-        RefActs["extract-context / plan / implement / review"]
-    end
-
-    GitActs --> GitEnv
-    GitActs --> Exec
-    GhActs --> GhInternals
-    GhActs --> Exec
-    RefActs --> RefInternals
-    RefActs --> RunCodex
-    CodexAct --> RunCodex
-    AdvAct --> RunCodex
-    RunCodex --> AppServer
-    RunCodex --> Exec
-    GitEnv --> Exec
-    ProcMgr -.->|"started by worker.ts"| AppServer
-```
-
-`_internal/` contents are used only within the same cluster. Cross-cluster sharing is limited to `activities/_internal/` (`exec`, `run-codex`, `run-codex-app-server`, `codex-app-server-process`).
 
 ---
 
 ## codex transport
 
-`runCodexExec` in `_internal/run-codex.ts` selects the transport at call time:
+`internal/codex/client.go` invokes the `codex` binary as a subprocess (`codex exec`). `auth.json` must be at `$HOME/.codex/auth.json` (or override with `$CODEX_HOME`).
 
-- **App-server mode** (default when `CODEX_APP_SERVER_URL` is set): connects to a running `codex app-server` via WebSocket JSON-RPC 2.0. The server is started in-process by `worker.ts` on startup (`startCodexAppServerProcess`). `auth.json` must be mounted in the **worker container**.
-- **Subprocess fallback** (when `CODEX_APP_SERVER_URL` is unset and the in-process start fails): spawns `codex exec` directly. `auth.json` must be at `$HOME/.codex/auth.json` (or `$CODEX_HOME/auth.json`).
-
-All codex invocations use `dangerFullAccess` sandbox (`sandboxPolicy: { type: 'dangerFullAccess' }` for app-server; `--sandbox danger-full-access` for subprocess). The Pod is the isolation boundary — it runs non-root with restricted network egress. bubblewrap-based sandbox modes (`workspace-write`, `read-only`) are not used because they require unprivileged user-namespace support that varies by cluster.
+All codex invocations use `--sandbox danger-full-access`. The Pod is the isolation boundary — it runs non-root with restricted network egress. bubblewrap-based sandbox modes (`workspace-write`, `read-only`) are not used because they require unprivileged user-namespace support that varies by cluster.
 
 ---
 
@@ -182,16 +102,9 @@ flowchart TD
     classDef finally fill:#fee,stroke:#a00,color:#400
 ```
 
-Guards omitted from the diagram (present in `periodic.ts`):
-- Parent checks `SpawnCounter.remaining()` before each child launch; exits loop if 0.
-- Child's `spawnCounts` / `advisorConsumed` are delta-synced into parent counters after each child completes.
-- On `dropped-not-converged`, parent calls `statusPorcelain` + `restore` to clean up before the next step.
-
-#### Spawn budget
-
-`SpawnCounter` enforces `DEFAULT_PERIODIC_SPAWN_CAP = 16`.  
-Worst case: `1 (context) + 1 (plan) + 2 steps × 2 iter × (1 implement + 2 reviewers) = 14`, with +2 retry buffer.  
-When the cap is reached, no further spawns occur and the current state is reported in Phase 3.
+Guards omitted from the diagram (present in `internal/workflow/periodic.go`):
+- Steps are capped at `maxStepsPerRun` (default 2).
+- On `circuit-broken`, the parent stops the step loop early.
 
 ---
 
@@ -234,7 +147,7 @@ Return value fields:
 | `advisorConsumed` | `number` | Advisor consults consumed by this child |
 | `advisorAudits` | `AdvisorAuditEntry[]` | Audit entries for advisor consults in this child |
 
-`workdir` is passed from the parent and used as-is (both run on the same Worker pod).
+`WorkDir` is passed from the parent via the session ID and used as-is (both run on the same Worker pod).
 
 ---
 
@@ -399,42 +312,40 @@ Repos are cloned to `os.tmpdir()/repo-steward-workspaces/<repo>__<random>` (or `
 
 ## Activities catalog
 
-All Activities registered with the Worker. `src/activities/index.ts` is the source of truth. The proxy column refers to the `proxyActivities` group in `src/workflows/proxies.ts`.
+All Activities are registered with the Worker in `cmd/main.go`.
 
 ### `git/` — workspace + git plumbing
 
-| Activity | File | Proxy | Role |
-| --- | --- | --- | --- |
-| `cloneRepoActivity` | `git/clone.ts` | `heavy` | Shallow clone + create `agent/refactor/<id>` branch |
-| `commitAllActivity` | `git/commit.ts` | `heavy` | `git add -A` + commit. Returns `committed: false` on empty diff |
-| `pushBranchActivity` | `git/push.ts` | `heavy` | `git push` (supports `-u` / `--force-with-lease`) |
-| `checkConflictActivity` | `git/check-conflict.ts` | `cheap` | Trial merge against base → list conflicting files |
-| `cleanupWorkspaceActivity` | `git/cleanup.ts` | `cheap` | Delete workdir in finally block |
-| `diffStatActivity` | `git/diff-stat.ts` | `cheap` | `--shortstat` for Pre-Parliament gate |
-| `diffTextActivity` | `git/diff-text.ts` | `cheap` | Full diff text for reviewers (truncated at `maxBytes`) |
-| `statusPorcelainActivity` | `git/status-porcelain.ts` | `cheap` | Porcelain snapshot for drift detection |
-| `restoreActivity` | `git/restore.ts` | `cheap` | Without `paths`: restore all files (critical_block rollback) |
+| Activity | File | Role |
+| --- | --- | --- |
+| `CloneRepoActivity` | `internal/activity/git/activities.go` | Clone + create `agent/refactor/<id>` branch |
+| `CommitAllActivity` | `internal/activity/git/activities.go` | `git add -A` + commit. Returns error on empty diff |
+| `PushBranchActivity` | `internal/activity/git/activities.go` | `git push` (supports `-u` / `--force-with-lease`) |
+| `CheckConflictActivity` | `internal/activity/git/activities.go` | Trial merge against base → returns conflict boolean |
+| `CleanupWorkspaceActivity` | `internal/activity/git/activities.go` | Delete workdir |
+| `DiffStatActivity` | `internal/activity/git/activities.go` | `git diff --stat HEAD` |
+| `StatusPorcelainActivity` | `internal/activity/git/activities.go` | `git status --porcelain` snapshot |
+| `RestoreActivity` | `internal/activity/git/activities.go` | `git restore .` + `git clean -fd` (rollback) |
 
 ### `github/` — gh CLI
 
-| Activity | File | Proxy | Role |
-| --- | --- | --- | --- |
-| `createPRActivity` | `github/create-pr.ts` | `cheap` | `gh pr create` + view to get `{number, url}` |
-| `waitForCIActivity` | `github/wait-for-ci.ts` | `ciWait` | Poll `statusCheckRollup` + `state`. Detects external close/merge |
-| `fetchFailedRunLogsActivity` | `github/fetch-failed-logs.ts` | `cheap` | `gh run view --log-failed` (input to codex self-heal) |
-| `mergePRActivity` | `github/merge-pr.ts` | `cheap` | `gh pr merge --auto --squash --delete-branch` |
-| `observePRStateActivity` | `github/observe-pr-state.ts` | `cheap` | `gh pr view --json state,mergedAt` (pre-merge gate + post-merge poll) |
+| Activity | File | Role |
+| --- | --- | --- |
+| `CreatePRActivity` | `internal/activity/github/activities.go` | `gh pr create` + view to get `{Number, URL}` |
+| `WaitForCIActivity` | `internal/activity/github/activities.go` | Poll `statusCheckRollup` + `state`. Detects external close/merge |
+| `FetchFailedRunLogsActivity` | `internal/activity/github/activities.go` | `gh run view --log-failed` (input to codex self-heal) |
+| `MergePRActivity` | `internal/activity/github/activities.go` | `gh pr merge --auto --squash --delete-branch` |
+| `ObservePRStateActivity` | `internal/activity/github/activities.go` | `gh pr view --json state,mergedAt` (post-merge poll) |
 
-### `codex/` / `refactor/` / `advisor/` — LLM
+### `codex/` — LLM
 
-| Activity | File | Proxy | Role |
-| --- | --- | --- | --- |
-| `codexActivity` | `codex/codex.ts` | `heavyCodex` | CI self-heal and conflict resolution in pr-lifecycle |
-| `extractContextArtifactActivity` | `refactor/extract-context.ts` | `contextCodex` | Distil repo summary once at workflow start |
-| `planActivity` | `refactor/plan.ts` | `planCodex` | Decompose theme into ≤2 steps |
-| `implementActivity` | `refactor/implement.ts` | `implementCodex` | Apply one step to the working tree |
-| `reviewActivity` | `refactor/review.ts` | `reviewCodex` | Per-concern reviewer (correctness / quality) |
-| `consultAdvisorActivity` | `advisor/advisor.ts` | `advisor` | Upper-model consult (gate-based, budget-capped) |
+| Activity | File | Role |
+| --- | --- | --- |
+| `DesignActivity` | `internal/activity/codex/activities.go` | Clone workspace + generate refactoring plan |
+| `ImplementActivity` | `internal/activity/codex/activities.go` | Apply one step to the working tree |
+| `ReviewActivity` | `internal/activity/codex/activities.go` | Per-concern reviewer (correctness / quality / design) |
+| `ChatActivity` | `internal/activity/codex/activities.go` | General-purpose codex prompt (CI self-heal) |
+| `ConsultAdvisorActivity` | `internal/activity/codex/activities.go` | Structured verdict at decision gates |
 
 ---
 
@@ -450,69 +361,61 @@ All Activities registered with the Worker. `src/activities/index.ts` is the sour
 | `TEMPORAL_TLS` | no | `false` | Set `true` to enable mTLS |
 | `TEMPORAL_MAX_CONCURRENT_ACTIVITIES` | no | `4` | Activity slot count (directly affects codex parallelism) |
 | `TEMPORAL_MAX_CONCURRENT_WORKFLOWS` | no | `20` | Workflow task slot count |
-| `NODE_ENV` | no | (unset) | `production` requires a pre-built workflow bundle |
 | `GITHUB_TOKEN` | yes | — | Auth for `gh` and `git push`. Fine-grained PAT recommended |
-| `GIT_BOT_NAME` | yes | — | `user.name` for auto-commits. Missing → `MissingCredentials` at startup |
-| `GIT_BOT_EMAIL` | yes | — | `user.email` for auto-commits. Missing → `MissingCredentials` at startup |
-| `CODEX_HOME` | no | `~/.codex` | Override the directory where `auth.json` is read |
-| `CODEX_APP_SERVER_URL` | no | (auto) | WebSocket URL of the codex app-server. Set automatically by `worker.ts` when the in-process server starts. Override to point at an external server |
-| `WORKSPACE_ROOT` | no | `os.tmpdir()/repo-steward-workspaces` | Root directory for cloned repos. Set to a mounted volume path when you want size-limited workspace storage |
-| `ADVISOR_MODEL` | no | (codex default) | Model name passed to `codex --model` for advisor consults. Use Opus or equivalent in production |
+| `GIT_BOT_NAME` | no | `repo-steward-bot` | `user.name` for auto-commits |
+| `GIT_BOT_EMAIL` | no | `repo-steward-bot@users.noreply.github.com` | `user.email` for auto-commits |
+| `CODEX_BIN` | no | `codex` | Path to the codex CLI binary |
+| `CODEX_MODEL` | no | (codex default) | Model passed to `codex --model`. Use Opus or equivalent in production |
+| `WORKSPACE_ROOT` | no | `/workspaces` | Root directory for cloned repos. Set to a mounted volume path |
+| `REGISTER_SCHEDULE` | no | `false` | Set `true` to install the Temporal schedule on startup |
+| `SCHEDULE_ID` | no | `repo-steward-periodic-refactor` | Temporal schedule ID |
+| `SCHEDULE_CRON` | no | `0 3 * * 1` | Cron expression for the periodic schedule |
+| `TARGET_REPO` | no | — | `owner/name` — used when `REGISTER_SCHEDULE=true` |
+| `REFACTOR_BRIEF` | no | — | User instructions passed to the planner |
+| `BASE_BRANCH` | no | `main` | Base ref to clone and target for merge |
+| `AUTO_MERGE` | no | `false` | Set `true` to merge automatically when CI is green |
 
-### `periodicRefactorWorkflow` input (`PeriodicRefactorInput`)
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `repoFullName` | `string` | required | `owner/name` |
-| `baseBranch` | `string?` | `main` | Base ref to clone and target for merge |
-| `refactorBrief` | `string?` | (none) | User instructions passed to the planner. If empty, the planner selects the theme freely |
-| `autoMerge` | `boolean?` | `true` | `false` stops just before merge, returning `outcome: 'auto-merge-disabled'` |
-| `maxAdvisorConsults` | `number?` | `1` | Maximum advisor consult calls. `0` disables entirely |
-
-### `refactorStepWorkflow` input (`RefactorStepInput`)
+### `PeriodicRefactorWorkflow` input (`PeriodicRefactorInput`)
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `step` | `PlanStep` | required | One step from the planner's output |
-| `workdir` | `string` | required | Workspace path provisioned by the parent |
-| `contextArtifact` | `ContextArtifact` | required | Repo summary for prompt-cache prefix |
-| `spawnBudget` | `number` | required | codex calls this child may consume (parent's remaining count) |
-| `advisorBudget` | `number` | required | Advisor consults this child may consume |
-| `config` | `StepLoopConfig` | required | `maxIter`, `trivialLineThreshold`, `reviewerConcerns`, etc. |
+| `RepoFullName` | `string` | required | `owner/name` |
+| `BaseBranch` | `string` | `main` | Base ref to clone and target for merge |
+| `Brief` | `string` | required | User instructions passed to the planner |
+| `PRTitle` / `PRBody` | `string` | required | PR display text |
+| `AutoMerge` | `bool` | `false` | `true` merges automatically when CI is green |
 
-See the flow diagram and return-value table above for `RefactorStepOutput` fields.  
-After each child completes, the parent calls `SpawnCounter.consume()` and `AdvisorBudget.addConsumed()` with the deltas, and appends `advisorAudits`.
+### `RefactorStepWorkflow` input (`RefactorStepInput`)
 
-### `robustPRMergeWorkflow` input (`RobustPRMergeInput`)
+| Field | Type | Description |
+| --- | --- | --- |
+| `SessionID` | `string` | Workspace session from the design phase |
+| `Step` | `Step` | One step from the planner's output (`Title` + `Description`) |
+| `ContextArtifact` | `string` | Path to the context artifact file |
+
+### `RobustPRMergeWorkflow` input (`RobustPRMergeInput`)
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `repoFullName` | `string` | required | `owner/name` |
-| `workdir` | `string` | required | Workspace path provisioned by the parent |
-| `branch` | `string` | required | Branch to push |
-| `baseBranch` | `string` | required | Merge target |
-| `prTitle` / `prBody` | `string` | required | PR display text |
-| `maxFixIterations` | `number?` | `8` | Combined CI self-heal + conflict resolution iteration cap |
-| `autoMerge` | `boolean?` | `true` | `false` → `outcome: 'auto-merge-disabled'` |
-| `maxAdvisorConsults` | `number?` | `2` | Advisor cap (`ci-self-heal` and `no-diff` each consume one) |
-| `postMergePollAttempts` | `number?` | `6` | Maximum merge-observation poll count |
-| `postMergePollIntervalMs` | `number?` | `10_000` | Poll interval in milliseconds |
+| `RepoFullName` | `string` | required | `owner/name` |
+| `WorkDir` | `string` | required | Workspace path provisioned by the design phase |
+| `Branch` | `string` | required | Branch to push |
+| `BaseBranch` | `string` | required | Merge target |
+| `PRTitle` / `PRBody` | `string` | required | PR display text |
+| `SessionID` | `string` | required | Session ID for codex self-heal |
+| `AutoMerge` | `bool` | `false` | `true` merges automatically when CI is green |
 
 ### Workflow hard-coded constants
 
 | Constant | Location | Value | Meaning |
 | --- | --- | --- | --- |
-| `DEFAULT_PERIODIC_SPAWN_CAP` | `workflows/_internal/spawn-budget.ts` | `16` | Total codex call cap (context + plan + impl + review combined) |
-| `MAX_STEPS` | `periodic.ts` | `2` | Maximum steps taken from the planner output |
-| `STEP_LOOP_CONFIG.maxIter` | `periodic.ts` | `2` | implement → review loop iteration cap per step |
-| `STEP_LOOP_CONFIG.trivialLineThreshold` | `periodic.ts` | `30` | Diffs below this (ins+del) skip Parliament |
-| `STEP_LOOP_CONFIG.trivialFileThreshold` | `periodic.ts` | `3` | Diffs below this file count skip Parliament |
-| `STEP_LOOP_CONFIG.reviewDiffBytes` | `periodic.ts` | `8 * 1024` | Maximum diff bytes passed to reviewers |
-| `STEP_LOOP_CONFIG.reviewerConcerns` | `periodic.ts` | `['correctness', 'quality']` | Parliament reviewer roles |
-| `CI_POLL_INTERVAL_SECONDS` | `pr-lifecycle.ts` | `30` | `waitForCIActivity` polling interval |
-| `CI_MAX_WAIT_SECONDS` | `pr-lifecycle.ts` | `3600` | CI wait upper bound (exceeded → `CITimeout`) |
-| `POST_MERGE_POLL_ATTEMPTS` | `pr-lifecycle.ts` | `6` | Default merge-observation poll count |
-| `POST_MERGE_POLL_INTERVAL_MS` | `pr-lifecycle.ts` | `10_000` | Default poll interval |
+| `maxStepsPerRun` | `internal/workflow/periodic.go` | `2` | Maximum steps taken from the planner output |
+| `maxStepIter` | `internal/workflow/refactor_step.go` | `2` | implement → review loop iteration cap per step |
+| `maxDesignRounds` | `internal/workflow/design_phase.go` | `2` | Plan review + refine loop cap |
+| `maxFixIterations` | `internal/workflow/pr_lifecycle.go` | `8` | CI self-heal iteration cap |
+| `postMergePollAttempts` | `internal/workflow/pr_lifecycle.go` | `6` | Merge-observation poll count |
+| CI poll interval | `internal/activity/github/activities.go` | `30s` | `WaitForCIActivity` polling interval |
+| CI max wait | `internal/activity/github/activities.go` | `3600s` | CI wait upper bound |
 
 ---
 
@@ -522,27 +425,19 @@ After each child completes, the parent calls `SpawnCounter.consume()` and `Advis
 
 | Type | Thrown by | Retryable? | Meaning and resolution |
 | --- | --- | --- | --- |
-| `MissingCredentials` | `gh-env.ts` / `git-env.ts` / `run-codex.ts` | No (nonRetryable) | `GITHUB_TOKEN` missing or `auth.json` absent. Fix the Worker environment |
-| `InvalidGitRef` | `git-env.ts` | No (nonRetryable) | Base branch is empty. Fix the Schedule input |
-| `InvalidGitHubOutput` | `gh-json.ts` | No (nonRetryable) | Unexpected gh CLI JSON. Check gh version or API changes |
-| `PlannerOutputInvalid` | `refactor/_internal/parsers.ts` | No (nonRetryable) | Planner returned non-JSON. Likely a prompt or model issue. periodic lands on `skipped: 'plan-failed'` |
-| `AdvisorOutputInvalid` | `advisor/advisor.ts` | No (nonRetryable, excluded in proxy) | Advisor returned non-JSON. Treated as `reply: undefined`; normal branch continues |
-| `RateLimited` | `run-codex.ts` / `run-codex-app-server.ts` | **Yes** | codex rate-limited (429 / quota text detected). `codexQuotaFriendlyRetry` applies exponential backoff |
-| `CodexInvocationError` | `run-codex.ts` / `run-codex-app-server.ts` | **Yes** | Non-zero codex exit or RPC error, not rate-limited. Workflow fails if retries are exhausted |
-| `CITimeout` | `pr-lifecycle.ts` (workflow) | No (workflow throw) | CI did not settle within `CI_MAX_WAIT_SECONDS`. Check GitHub Actions |
-| `AdvisorAbort` | `pr-lifecycle.ts` (workflow) | No (workflow throw) | Advisor returned `verdict: abort` at iter ≥ 2. Intentional early stop |
-| `NoFixDiff` | `pr-lifecycle.ts` (workflow) | No (workflow throw) | codex claimed a fix but diff is empty. Check prompt / sandbox |
-| `MaxIterationsExceeded` | `pr-lifecycle.ts` (workflow) | No (workflow throw) | `maxFixIterations` exhausted without reaching CI green |
-
-`MissingCredentials`, `InvalidGitRef`, `PlannerOutputInvalid`, and `AdvisorOutputInvalid` are listed in `nonRetryableErrorTypes` in `proxies.ts`, so they fail on the first attempt even through proxy retry policies.
+| `InvalidGitHubOutput` | `internal/activity/github/activities.go` | No (nonRetryable) | Unexpected gh CLI JSON. Check gh version or API changes |
+| `CITimeout` | `internal/activity/github/activities.go` | No | CI did not settle within max wait. Check GitHub Actions |
+| `AdvisorAbort` | `internal/errors/errors.go` (workflow throw) | No | Advisor returned `verdict: abort`. Intentional early stop |
+| `NoFixDiff` | `internal/errors/errors.go` (workflow throw) | No | codex produced no diff after CI failure. Check prompt / sandbox |
+| `MaxIterations` | `internal/errors/errors.go` (workflow throw) | No | `maxFixIterations` exhausted without reaching CI green |
 
 ---
 
 ## Known limitations and future work
 
-1. **workdir is pod-local**: The parent Workflow provisions `workdir` and passes it to child Workflows, which assumes all of them run on the same Worker pod. When scaling, either pin Workflows to pods, move `workdir` to shared storage, or re-clone in each child.
-2. **codex CLI flags are version-sensitive**: Arguments are matched to the documented API at build time. Pin the version in CI; absorb breaking changes in `_internal/run-codex.ts` and `_internal/run-codex-app-server.ts`.
-3. **Replay tests not set up**: `tests/fixtures/replay/` is a placeholder. Adding `Worker.runReplayHistory` CI checks would make it safe to version long-lived Workflows like `pr-lifecycle.ts`.
-4. **Issue-driven route**: To handle `ai-ready`-labelled issues, add `github/list-ai-ready-issues.ts` / `github/update-issue-status.ts` and build `issuePollerWorkflow` → `issueDrivenWorkflow` → `robustPRMergeWorkflow`.
-5. **Alternative LLM**: To add Claude or another model, add a separate Activity cluster and a corresponding proxy. The current codex-only setup is intentional; the architecture does not preclude adding more.
-6. **`change-strategy` verdict is treated as `retry`**: The suggested action is recorded in the audit log but has no distinct runtime effect. A future branch could implement concrete actions (e.g. convert PR to draft, apply a different prompt strategy).
+1. **workdir is pod-local**: The design phase provisions `WorkDir` and passes it via session ID to child workflows, assuming all run on the same Worker pod. When scaling, either pin Workflows to pods, move `WorkDir` to shared storage, or re-clone in each child.
+2. **codex CLI flags are version-sensitive**: Arguments are matched to the documented API at build time. Pin the version in CI; absorb breaking changes in `internal/codex/client.go`.
+3. **Replay tests not set up**: Adding history-replay tests to CI would make it safe to version long-lived Workflows like `RobustPRMergeWorkflow`.
+4. **Issue-driven route**: To handle `ai-ready`-labelled issues, add GitHub list/update activities and build `issuePollerWorkflow` → `issueDrivenWorkflow` → `RobustPRMergeWorkflow`.
+5. **Alternative LLM**: To add Claude or another model, add a new activity package and register it. The current codex-only setup is intentional; the architecture does not preclude adding more.
+6. **`change-strategy` verdict is treated as `retry`**: The advisor can return `change-strategy` but the current implementation handles it identically to `retry`. A future branch could implement concrete actions.

@@ -26,50 +26,29 @@ Temporal Schedule ──▶ periodicRefactorWorkflow
 
 ```
 .
-├── Dockerfile                       # Node 20 + gh CLI + codex CLI
+├── Dockerfile                       # Go binary + gh CLI + codex CLI (Node runtime for codex)
 ├── docker-compose.yml               # Local dev: Temporal dev server + worker
 ├── deploy/k8s/worker-deployment.yaml# Kubernetes Deployment manifest
-├── package.json                     # @temporalio/* (~1.11)
-├── tsconfig.json
 ├── .env.example                     # Worker env var template
 ├── scripts/
-│   ├── schedule-setup.sh            # temporal schedule create --upsert
-│   └── build-workflow-bundle.ts     # Pre-bundle for production
-├── src/
-│   ├── constants.ts                 # TASK_QUEUE
-│   ├── worker.ts                    # Worker entry point; spawns codex app-server in-process
-│   ├── client.ts                    # Dev client (install-schedule / run-once)
-│   ├── activities/                  # Activities registered with the worker (1 file = 1 Activity)
-│   │   ├── index.ts                 # Barrel — registered with Worker
-│   │   ├── _internal/               # Shared helpers (not Activities)
-│   │   ├── advisor/                 # Upper-model consult (consultAdvisorActivity)
-│   │   ├── codex/                   # Generic single-shot codex (codexActivity)
-│   │   ├── git/                     # clone / commit / push / conflict / restore / etc.
-│   │   ├── github/                  # gh CLI (create-pr / wait-for-ci / merge / observe)
-│   │   └── refactor/                # Role-specific codex (extract-context / plan / implement / review)
-│   └── workflows/                   # Workflow definitions (deterministic)
-│       ├── index.ts
-│       ├── proxies.ts               # proxyActivities groups (cheap / heavy / *Codex / advisor / ciWait)
-│       ├── periodic.ts              # periodicRefactorWorkflow (orchestrator)
-│       ├── refactor-step.ts         # refactorStepWorkflow (child, 1 plan step)
-│       ├── pr-lifecycle.ts          # robustPRMergeWorkflow (child)
-│       └── _internal/               # Workflow helpers (non-workflow code)
-│           ├── advisor.ts           # Advisor budget + consult protocol
-│           ├── porcelain.ts         # git status/diff helpers
-│           ├── refactor-report.ts   # PR body renderer (pure)
-│           ├── refactor-step-loop.ts# implement → Parliament loop body
-│           └── spawn-budget.ts      # codex spawn counter + cap
-├── tests/
-│   ├── exec.test.ts
-│   ├── git.test.ts
-│   ├── github.test.ts
-│   ├── github-ci.test.ts
-│   ├── porcelain.test.ts
-│   ├── periodic.test.ts             # periodicRefactorWorkflow (TestWorkflowEnvironment)
-│   ├── pr-lifecycle.test.ts         # robustPRMergeWorkflow (TestWorkflowEnvironment)
-│   ├── replay.test.ts               # History-replay compatibility (placeholder)
-│   ├── helpers.ts                   # Bundle + mock activity factory
-│   └── fixtures/replay/             # Replay history fixture directory
+│   └── schedule-setup.sh            # temporal schedule create --upsert
+├── cmd/
+│   └── main.go                      # Worker entry point; registers workflows + activities
+├── internal/
+│   ├── activity/
+│   │   ├── codex/activities.go      # Design, Implement, Review, Chat, ConsultAdvisor
+│   │   ├── git/activities.go        # CloneRepo, CommitAll, PushBranch, CheckConflict, etc.
+│   │   └── github/activities.go     # CreatePR, WaitForCI, FetchFailedLogs, MergePR, ObservePRState
+│   ├── codex/client.go              # codex CLI subprocess wrapper
+│   ├── errors/errors.go             # Typed ApplicationFailures
+│   ├── workflow/
+│   │   ├── periodic.go              # PeriodicRefactorWorkflow (orchestrator)
+│   │   ├── design_phase.go          # DesignPhaseWorkflow (plan → review loop)
+│   │   ├── refactor_step.go         # RefactorStepWorkflow (implement → review loop)
+│   │   └── pr_lifecycle.go          # RobustPRMergeWorkflow (push → CI → merge)
+│   └── workspace/
+│       ├── manager.go               # Session lifecycle manager
+│       └── session.go               # Workspace session
 └── docs/
     ├── architecture.md              # Workflow/Activity design, configuration reference
     └── deployment-example.md        # Kubernetes deployment example
@@ -83,22 +62,22 @@ See [`docs/architecture.md`](./docs/architecture.md) for the full Activity/Workf
 # 1. Start a Temporal dev server in a separate terminal
 temporal server start-dev
 
-# 2. Install dependencies
-npm install
-
-# 3. Log in to codex via browser (~/.codex/auth.json is created)
+# 2. Log in to codex via browser (~/.codex/auth.json is created)
 codex login
 
-# 4. Configure env and start the worker
+# 3. Configure env
 cp .env.example .env
-$EDITOR .env        # set GITHUB_TOKEN, GIT_BOT_NAME, GIT_BOT_EMAIL
-npm run start.worker.dev
+$EDITOR .env        # set GITHUB_TOKEN, TARGET_REPO, REFACTOR_BRIEF
 
-# 5. Install the schedule
-npm run start.client -- --command=install-schedule --repo=<owner>/<repo>
+# 4. Build and start the worker
+go build -o repo-steward ./cmd
+./repo-steward
 
-# 6. Run tests (TestWorkflowEnvironment starts a local Temporal server)
-npm test
+# 5. Install the schedule (or set REGISTER_SCHEDULE=true before step 4)
+bash scripts/schedule-setup.sh
+
+# 6. Run tests
+go test ./...
 ```
 
 See [`docs/architecture.md`](./docs/architecture.md) and [`docs/deployment-example.md`](./docs/deployment-example.md) for more detail.
@@ -158,7 +137,7 @@ For Kubernetes deployments, store credentials as Secrets. See [`docs/deployment-
 
 | Job | Content | On PR | On push to main |
 | --- | --- | --- | --- |
-| `build / lint / test` | npm build + lint + test | ✅ | ✅ |
+| `build / vet / test` | go build + go vet + go test | ✅ | ✅ |
 | `docker image` | Dockerfile build + push to GHCR | build only | pushes `ghcr.io/<owner>/<repo>:preview` |
 
 The `:preview` tag tracks the latest main commit. Stable releases use `:0.x.y` and `:latest` pushed by a `workflow_dispatch` Release workflow (git tag convention: `v0.x.y`).
@@ -186,6 +165,6 @@ Pass `autoMerge: false` as workflow input to stop just before merge (returns `ou
 ## Known limitations
 
 - **workdir is pod-local**: The parent Workflow's `workdir` is reused by child Workflows on the assumption they run on the same Worker pod. When scaling, either pin a Workflow to a pod, use a shared volume for `workdir`, or re-clone in each child.
-- **codex CLI flags are version-sensitive**: Arguments are based on the documented API at build time. Pin the version in CI; absorb breaking changes in `src/activities/_internal/run-codex.ts` and `run-codex-app-server.ts`.
-- **Replay fixtures not set up**: `tests/fixtures/replay/` is a placeholder. Adding `Worker.runReplayHistory` tests to CI would make versioning long-lived Workflows (especially `pr-lifecycle.ts`) safe.
+- **codex CLI flags are version-sensitive**: Arguments are matched to the documented API at build time. Pin the version in CI; absorb breaking changes in `internal/codex/client.go`.
+- **Replay tests not set up**: Adding history-replay tests to CI would make it safe to version long-lived Workflows (especially `RobustPRMergeWorkflow`).
 - **`change-strategy` verdict is treated as `retry`**: The advisor can return `change-strategy` but the current implementation handles it identically to `retry` (the suggestion is recorded in the audit log only). A future branch could implement concrete actions like converting the PR to a draft.
