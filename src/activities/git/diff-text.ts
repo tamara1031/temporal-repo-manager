@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { execOrThrow } from '../_internal/exec';
 
 export interface DiffTextInput {
@@ -11,12 +12,20 @@ export interface DiffTextOutput {
   text: string;
   /** True when the underlying `git diff` was longer than `maxBytes`. */
   truncated: boolean;
+  /**
+   * SHA-256 hex digest of the FULL diff before truncation.
+   * Used for no-progress detection: comparing hashes is correct regardless of
+   * whether the diff was truncated, unlike comparing the text prefix.
+   */
+  contentHash: string;
 }
 
 /** Full unified diff for reviewer input. Truncated to keep activity payloads small. */
 export async function diffTextActivity(input: DiffTextInput): Promise<DiffTextOutput> {
   const res = await execOrThrow('git', ['diff'], { cwd: input.workdir });
+  const full = res.stdout;
+  const contentHash = createHash('sha256').update(full).digest('hex');
   const max = input.maxBytes ?? 8 * 1024;
-  if (res.stdout.length <= max) return { text: res.stdout, truncated: false };
-  return { text: res.stdout.slice(0, max), truncated: true };
+  if (full.length <= max) return { text: full, truncated: false, contentHash };
+  return { text: full.slice(0, max), truncated: true, contentHash };
 }
