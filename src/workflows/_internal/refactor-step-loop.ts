@@ -151,8 +151,7 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
     driftReverts: [],
   };
   const accumulatedFeedback: string[] = [];
-  let lastDiffText: string | undefined;
-  let lastDiffTruncated = false;
+  let lastContentHash: string | undefined;
   let lastPorcelainEntries: string[] | undefined;
 
   const snapshot = await startStepSnapshotLifecycle(workdir);
@@ -194,26 +193,17 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
       cheap.diffTextActivity({ workdir, maxBytes: reviewDiffBytes }),
       cheap.diffStatActivity({ workdir }),
     ]);
-    // No-progress detection: require BOTH the diff text AND the porcelain
-    // file-set to be unchanged before calling it no-progress.
-    // - diff text captures content changes to tracked files
+    // No-progress detection: require BOTH the content hash AND the porcelain
+    // file-set to be unchanged before declaring no-progress.
+    // - contentHash covers the full diff before any truncation, so this check
+    //   is correct for both small and large diffs without a truncation guard
     // - porcelain entries capture new untracked files (git diff omits them)
     // Either signal differing means the implementer made real progress.
-    //
-    // Truncation guard: when either snapshot was cut at maxBytes, the stored
-    // text is a prefix, not the full diff. Two distinct full diffs can share
-    // an identical prefix, so comparing truncated snapshots can produce a
-    // false "no progress" result and prematurely roll back a productive step.
-    // We skip the check entirely when either side was truncated; the
-    // maxIter cap still bounds the loop in the worst case.
-    const currentTruncated = postImplDiff.truncated;
     if (
       iter > 0 &&
-      !lastDiffTruncated &&
-      !currentTruncated &&
-      lastDiffText !== undefined &&
+      lastContentHash !== undefined &&
       lastPorcelainEntries !== undefined &&
-      lastDiffText === postImplDiff.text &&
+      lastContentHash === postImplDiff.contentHash &&
       arraysEqual(lastPorcelainEntries, postImplStatus.entries)
     ) {
       log.info('no progress between iterations; rolling back this step', {
@@ -223,8 +213,7 @@ export async function runRefactorStep(input: RunStepInput): Promise<StepLoopResu
       record.outcome = 'dropped-no-progress';
       return { kind: 'completed', record };
     }
-    lastDiffText = postImplDiff.text;
-    lastDiffTruncated = currentTruncated;
+    lastContentHash = postImplDiff.contentHash;
     lastPorcelainEntries = postImplStatus.entries;
 
     // 3. Pre-Parliament Gate (trivial diff → skip Parliament)
