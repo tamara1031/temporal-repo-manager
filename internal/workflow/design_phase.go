@@ -1,7 +1,9 @@
 package workflow
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	codexact "github.com/tamara1031/temporal-repo-steward/internal/activity/codex"
@@ -99,14 +101,27 @@ func DesignPhaseWorkflow(ctx workflow.Context, in DesignPhaseInput) (DesignPhase
 			workflow.WithActivityOptions(ctx, opts),
 			acts.ChatActivity,
 			codexact.ChatInput{
-				SessionID: sessionID,
-				Message:   fmt.Sprintf("Refine the plan based on this feedback: %s", reviewResult.Feedback),
-				Context:   contextArtifact,
+				SessionID:           sessionID,
+				Message:             fmt.Sprintf("Refine the plan based on this feedback: %s\n\nRespond with JSON only: {\"theme\":\"...\",\"steps\":[{\"title\":\"...\",\"description\":\"...\"}]}", reviewResult.Feedback),
+				ContextArtifactPath: contextArtifact,
 			},
 		).Get(ctx, &refineResult); err != nil {
 			break
 		}
-		plan.Theme = refineResult.Response
+		// Apply the refined plan: prefer a full JSON plan (preserving steps); fall back to theme-only.
+		raw := refineResult.Response
+		if start := strings.Index(raw, "{"); start >= 0 {
+			if end := strings.LastIndex(raw, "}"); end > start {
+				var refined codexact.Plan
+				if err := json.Unmarshal([]byte(raw[start:end+1]), &refined); err == nil {
+					if len(refined.Steps) > 0 {
+						plan = refined
+					} else if refined.Theme != "" {
+						plan.Theme = refined.Theme
+					}
+				}
+			}
+		}
 	}
 
 	return DesignPhaseResult{

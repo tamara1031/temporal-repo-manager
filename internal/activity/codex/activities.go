@@ -77,9 +77,10 @@ type ReviewResult struct {
 
 // ChatInput is the input to ChatActivity.
 type ChatInput struct {
-	Message   string `json:"message"`
-	SessionID string `json:"session_id,omitempty"`
-	Context   string `json:"context,omitempty"`
+	Message             string `json:"message"`
+	SessionID           string `json:"session_id,omitempty"`
+	Context             string `json:"context,omitempty"`                // inline text, prepended verbatim
+	ContextArtifactPath string `json:"context_artifact_path,omitempty"` // file path, read and prepended (consistent with ReviewActivity)
 }
 
 // ChatResult is the output of ChatActivity.
@@ -236,7 +237,7 @@ func (a *Activities) ReviewActivity(ctx context.Context, in ReviewInput) (Review
 	prompt := fmt.Sprintf(
 		"Review the following code change for %s concerns.\n\n"+
 			"Respond with JSON only:\n"+
-			`{"verdict":"ok|suggest|critical_block","feedback":"<explanation>","suggestions":["<suggestion>",...]}`+"\n\n"+
+			`{"verdict":"ok|suggest|critical_block","feedback":"<explanation>","suggestions":["<suggestion>",...]}` + "\n\n"+
 			"Diff:\n%s\n\n%s",
 		in.Concern,
 		diff,
@@ -267,7 +268,11 @@ func (a *Activities) ChatActivity(ctx context.Context, in ChatInput) (ChatResult
 	}
 
 	prompt := in.Message
-	if in.Context != "" {
+	if in.ContextArtifactPath != "" {
+		if data, err := os.ReadFile(in.ContextArtifactPath); err == nil {
+			prompt = string(data) + "\n\n" + in.Message
+		}
+	} else if in.Context != "" {
 		prompt = in.Context + "\n\n" + in.Message
 	}
 
