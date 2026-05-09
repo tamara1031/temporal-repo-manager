@@ -180,26 +180,26 @@ func (a *Activities) ImplementActivity(ctx context.Context, in ImplementInput) (
 		optContext(ctxText),
 	)
 
-	shaBefore, _ := gitutil.Output(ctx, s.WorkDir, "rev-parse", "HEAD")
+	shaBefore, _ := gitutil.Output(ctx, s.WorkDir, "git", "rev-parse", "HEAD")
 
 	if _, err := a.cx.Run(ctx, codex.RunOptions{WorkDir: s.WorkDir, Prompt: prompt}); err != nil {
 		return ImplementResult{}, fmt.Errorf("codex: %w", err)
 	}
 
-	shaAfter, _ := gitutil.Output(ctx, s.WorkDir, "rev-parse", "HEAD")
+	shaAfter, _ := gitutil.Output(ctx, s.WorkDir, "git", "rev-parse", "HEAD")
 	commitSHA := strings.TrimSpace(shaAfter)
 	hasChanges := strings.TrimSpace(shaBefore) != commitSHA
 
 	var diffStat string
 	if hasChanges {
-		diffStat, _ = gitutil.Output(ctx, s.WorkDir, "diff", "--stat", "HEAD~1", "HEAD")
+		diffStat, _ = gitutil.Output(ctx, s.WorkDir, "git", "diff", "--stat", "HEAD~1", "HEAD")
 	} else {
-		_ = gitutil.Run(ctx, s.WorkDir, "add", "-A")
-		diffStat, _ = gitutil.Output(ctx, s.WorkDir, "diff", "--cached", "--stat")
+		_ = gitutil.Run(ctx, s.WorkDir, "git", "add", "-A")
+		diffStat, _ = gitutil.Output(ctx, s.WorkDir, "git", "diff", "--cached", "--stat")
 		hasChanges = strings.TrimSpace(diffStat) != ""
 		if hasChanges {
-			_ = gitutil.Run(ctx, s.WorkDir, "commit", "-m", fmt.Sprintf("refactor: %s", in.Step.Title))
-			sha, _ := gitutil.Output(ctx, s.WorkDir, "rev-parse", "HEAD")
+			_ = gitutil.Run(ctx, s.WorkDir, "git", "commit", "-m", fmt.Sprintf("refactor: %s", in.Step.Title))
+			sha, _ := gitutil.Output(ctx, s.WorkDir, "git", "rev-parse", "HEAD")
 			commitSHA = strings.TrimSpace(sha)
 		}
 	}
@@ -224,7 +224,7 @@ func (a *Activities) ReviewActivity(ctx context.Context, in ReviewInput) (Review
 
 	diff := in.Diff
 	if diff == "" {
-		diff, _ = gitutil.Output(ctx, s.WorkDir, "diff", "HEAD~1", "HEAD")
+		diff, _ = gitutil.Output(ctx, s.WorkDir, "git", "diff", "HEAD~1", "HEAD")
 	}
 
 	ctxText := ""

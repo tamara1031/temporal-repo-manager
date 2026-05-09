@@ -132,14 +132,14 @@ func (m *Manager) clone(ctx context.Context, repoFullName, baseBranch, branch, w
 		return err
 	}
 	cloneURL := fmt.Sprintf("https://x-access-token:%s@github.com/%s.git", m.githubToken, repoFullName)
-	if err := gitutil.Run(ctx, workDir, "clone", "--branch="+baseBranch, cloneURL, "."); err != nil {
+	if err := gitutil.Run(ctx, workDir, "git", "clone", "--branch="+baseBranch, cloneURL, "."); err != nil {
 		return err
 	}
-	if err := gitutil.Run(ctx, workDir, "config", "user.name", m.botName); err != nil {
+	if err := gitutil.Run(ctx, workDir, "git", "config", "user.name", m.botName); err != nil {
 		return err
 	}
-	if err := gitutil.Run(ctx, workDir, "config", "user.email", m.botEmail); err != nil {
+	if err := gitutil.Run(ctx, workDir, "git", "config", "user.email", m.botEmail); err != nil {
 		return err
 	}
-	return gitutil.Run(ctx, workDir, "checkout", "-b", branch)
+	return gitutil.Run(ctx, workDir, "git", "checkout", "-b", branch)
 }
