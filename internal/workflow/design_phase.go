@@ -89,8 +89,13 @@ func DesignPhaseWorkflow(ctx workflow.Context, in DesignPhaseInput) (DesignPhase
 			workflow.WithActivityOptions(ctx, shortActOpts()),
 			acts.ChatActivity,
 			codexact.ChatInput{
-				SessionID:       sessionID,
-				Message:         fmt.Sprintf("Refine the plan based on this feedback: %s\n\nRespond with JSON only: {\"theme\":\"...\",\"steps\":[{\"title\":\"...\",\"description\":\"...\"}]}", reviewResult.Feedback),
+				SessionID: sessionID,
+				Message: fmt.Sprintf(
+					"Refine the plan based on this feedback: %s\n\n"+
+						"Respond with JSON only matching this exact shape:\n"+
+						`{"theme":"<one-line summary>","steps":[{"title":"<title>","description":"<what to do>"},...]}`,
+					reviewResult.Feedback,
+				),
 				ContextArtifact: contextArtifact,
 			},
 		).Get(ctx, &refineResult); err != nil {

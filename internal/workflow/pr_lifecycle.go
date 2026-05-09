@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	maxFixIterations      = 8
+	maxFixIterations     = 8
 	postMergePollAttempts = 6
 )
 
@@ -150,7 +150,7 @@ func RobustPRMergeWorkflow(ctx workflow.Context, in RobustPRMergeInput) (RobustP
 				ghact.FetchFailedRunLogsInput{
 					WorkDir:       in.WorkDir,
 					PRNumber:      prResult.Number,
-					FailedRunURLs: ciResult.FailedRuns, // use the specific runs already identified
+					FailedRunURLs: ciResult.FailedRuns,
 				},
 			).Get(ctx, &failLogs)
 

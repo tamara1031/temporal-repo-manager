@@ -138,7 +138,7 @@ func (a *Activities) DesignActivity(ctx context.Context, in DesignInput) (Design
 	}
 
 	var plan Plan
-	if err := extractJSON(raw, &plan); err != nil {
+	if err := ExtractJSON(raw, &plan); err != nil {
 		plan = Plan{Theme: in.Brief}
 	}
 
@@ -249,7 +249,7 @@ func (a *Activities) ReviewActivity(ctx context.Context, in ReviewInput) (Review
 	}
 
 	var result ReviewResult
-	if err := extractJSON(raw, &result); err != nil {
+	if err := ExtractJSON(raw, &result); err != nil {
 		result = ReviewResult{Verdict: "suggest", Feedback: raw}
 	}
 
@@ -304,7 +304,7 @@ func (a *Activities) ConsultAdvisorActivity(ctx context.Context, summary string)
 	}
 
 	var verdict AdvisorVerdict
-	if err := extractJSON(raw, &verdict); err != nil {
+	if err := ExtractJSON(raw, &verdict); err != nil {
 		return AdvisorVerdict{Verdict: "retry", Rationale: raw}, nil
 	}
 
@@ -325,7 +325,8 @@ func optContext(ctx string) string {
 	return "Context:\n" + ctx
 }
 
-func extractJSON(raw string, v any) error {
+// ExtractJSON extracts the first JSON object from a raw string and unmarshals it.
+func ExtractJSON(raw string, v any) error {
 	start := strings.Index(raw, "{")
 	end := strings.LastIndex(raw, "}")
 	if start == -1 || end == -1 || end <= start {
