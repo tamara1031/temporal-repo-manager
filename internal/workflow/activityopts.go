@@ -7,21 +7,8 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
-// codexActivityOpts returns options for long-running Codex AI invocations (design, implement).
-func codexActivityOpts() workflow.ActivityOptions {
-	return workflow.ActivityOptions{
-		StartToCloseTimeout: 35 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts:    5,
-			InitialInterval:    30 * time.Second,
-			BackoffCoefficient: 3,
-			MaximumInterval:    10 * time.Minute,
-		},
-	}
-}
-
-// reviewActivityOpts returns options for shorter Codex review and chat calls.
-func reviewActivityOpts() workflow.ActivityOptions {
+// shortActOpts covers design, review, chat, and advisor activities (≤10 min each).
+func shortActOpts() workflow.ActivityOptions {
 	return workflow.ActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
@@ -33,8 +20,21 @@ func reviewActivityOpts() workflow.ActivityOptions {
 	}
 }
 
-// cheapActivityOpts returns options for fast, idempotent GitHub API calls.
-func cheapActivityOpts() workflow.ActivityOptions {
+// longCodexActOpts covers codex implement activities that may run up to 35 min.
+func longCodexActOpts() workflow.ActivityOptions {
+	return workflow.ActivityOptions{
+		StartToCloseTimeout: 35 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts:    5,
+			InitialInterval:    30 * time.Second,
+			BackoffCoefficient: 3,
+			MaximumInterval:    10 * time.Minute,
+		},
+	}
+}
+
+// fastGHActOpts covers cheap GitHub API calls (PR create, merge, state poll).
+func fastGHActOpts() workflow.ActivityOptions {
 	return workflow.ActivityOptions{
 		StartToCloseTimeout: 2 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
@@ -46,8 +46,8 @@ func cheapActivityOpts() workflow.ActivityOptions {
 	}
 }
 
-// heavyActivityOpts returns options for git push and other network-heavy operations.
-func heavyActivityOpts() workflow.ActivityOptions {
+// heavyGitActOpts covers git push and similar operations that may be slow on large repos.
+func heavyGitActOpts() workflow.ActivityOptions {
 	return workflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
@@ -59,8 +59,8 @@ func heavyActivityOpts() workflow.ActivityOptions {
 	}
 }
 
-// ciWaitActivityOpts returns options for the long-polling CI status activity.
-func ciWaitActivityOpts() workflow.ActivityOptions {
+// ciPollActOpts covers the long-running WaitForCI activity with its heartbeat requirement.
+func ciPollActOpts() workflow.ActivityOptions {
 	return workflow.ActivityOptions{
 		StartToCloseTimeout: 70 * time.Minute,
 		HeartbeatTimeout:    60 * time.Second,

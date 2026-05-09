@@ -30,7 +30,7 @@ func RefactorStepWorkflow(ctx workflow.Context, in RefactorStepInput) (RefactorS
 	for iter := 0; iter < maxStepIter; iter++ {
 		var implResult codexact.ImplementResult
 		if err := workflow.ExecuteActivity(
-			workflow.WithActivityOptions(ctx, codexActivityOpts()),
+			workflow.WithActivityOptions(ctx, longCodexActOpts()),
 			acts.ImplementActivity,
 			codexact.ImplementInput{
 				SessionID:       in.SessionID,
@@ -49,7 +49,7 @@ func RefactorStepWorkflow(ctx workflow.Context, in RefactorStepInput) (RefactorS
 		for _, concern := range []string{"correctness", "quality"} {
 			var reviewResult codexact.ReviewResult
 			if err := workflow.ExecuteActivity(
-				workflow.WithActivityOptions(ctx, reviewActivityOpts()),
+				workflow.WithActivityOptions(ctx, shortActOpts()),
 				acts.ReviewActivity,
 				codexact.ReviewInput{
 					SessionID:       in.SessionID,
@@ -65,7 +65,7 @@ func RefactorStepWorkflow(ctx workflow.Context, in RefactorStepInput) (RefactorS
 					advisorSummary := fmt.Sprintf("Step: %s\nConcern: %s\nFeedback: %s", in.Step.Title, concern, reviewResult.Feedback)
 					var verdict codexact.AdvisorVerdict
 					if err := workflow.ExecuteActivity(
-						workflow.WithActivityOptions(ctx, reviewActivityOpts()),
+						workflow.WithActivityOptions(ctx, shortActOpts()),
 						acts.ConsultAdvisorActivity,
 						advisorSummary,
 					).Get(ctx, &verdict); err == nil && verdict.Verdict == "abort" {
