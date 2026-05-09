@@ -118,7 +118,7 @@ func (s *designPhaseSuite) Test_RefinesOnSuggest_ThenOK() {
 		Return(codexact.ReviewResult{Verdict: "suggest", Feedback: "improve x"}, nil).Once()
 
 	env.OnActivity(acts.ChatActivity, mock.Anything, mock.Anything).
-		Return(codexact.ChatResult{SessionID: "test-session-00000001", Response: "refined theme"}, nil)
+		Return(codexact.ChatResult{SessionID: "test-session-00000001", Response: `{"theme":"refined theme","steps":[{"title":"step1","description":"refined desc"}]}`}, nil)
 
 	env.OnActivity(acts.ReviewActivity, mock.Anything, mock.Anything).
 		Return(codexact.ReviewResult{Verdict: "ok"}, nil).Once()
