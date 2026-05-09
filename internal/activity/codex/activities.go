@@ -76,9 +76,10 @@ type ReviewResult struct {
 
 // ChatInput is the input to ChatActivity.
 type ChatInput struct {
-	Message   string `json:"message"`
-	SessionID string `json:"session_id,omitempty"`
-	Context   string `json:"context,omitempty"`
+	Message         string `json:"message"`
+	SessionID       string `json:"session_id,omitempty"`
+	Context         string `json:"context,omitempty"`
+	ContextArtifact string `json:"context_artifact,omitempty"` // path to a file whose content is prepended to Message
 }
 
 // ChatResult is the output of ChatActivity.
@@ -266,8 +267,12 @@ func (a *Activities) ChatActivity(ctx context.Context, in ChatInput) (ChatResult
 	}
 
 	prompt := in.Message
-	if in.Context != "" {
-		prompt = in.Context + "\n\n" + in.Message
+	if in.ContextArtifact != "" {
+		if data, err := os.ReadFile(in.ContextArtifact); err == nil {
+			prompt = string(data) + "\n\n" + prompt
+		}
+	} else if in.Context != "" {
+		prompt = in.Context + "\n\n" + prompt
 	}
 
 	workDir := ""
@@ -305,7 +310,7 @@ func (a *Activities) ConsultAdvisorActivity(ctx context.Context, summary string)
 	return verdict, nil
 }
 
-// ── helpers ────────────────────────────────────────────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────────────────────────────────
 
 func newSessionID() string {
 	return fmt.Sprintf("sess-%d", time.Now().UnixNano())
