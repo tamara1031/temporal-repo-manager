@@ -7,8 +7,8 @@ import (
 	"os/exec"
 )
 
-// Run executes a command in dir, returning a formatted error that includes stderr on failure.
-func Run(ctx context.Context, dir string, name string, args ...string) error {
+// Run executes a command in dir, returning an error that includes stderr output.
+func Run(ctx context.Context, dir, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	var errBuf bytes.Buffer
@@ -19,9 +19,8 @@ func Run(ctx context.Context, dir string, name string, args ...string) error {
 	return nil
 }
 
-// Output executes a command in dir, returning stdout on success.
-// On failure the error includes the captured stderr from ExitError where available.
-func Output(ctx context.Context, dir string, name string, args ...string) (string, error) {
+// Output executes a command in dir and returns its combined stdout, or an error.
+func Output(ctx context.Context, dir, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()

@@ -150,7 +150,7 @@ func RobustPRMergeWorkflow(ctx workflow.Context, in RobustPRMergeInput) (RobustP
 				ghact.FetchFailedRunLogsInput{
 					WorkDir:       in.WorkDir,
 					PRNumber:      prResult.Number,
-					FailedRunURLs: ciResult.FailedRuns,
+					FailedRunURLs: ciResult.FailedRuns, // use the specific runs already identified
 				},
 			).Get(ctx, &failLogs)
 

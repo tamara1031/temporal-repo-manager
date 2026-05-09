@@ -312,7 +312,7 @@ func (a *Activities) ConsultAdvisorActivity(ctx context.Context, summary string)
 	return verdict, nil
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────────────────────────
+// ── helpers ─────────────────────────────────────────────────────────────────────────────
 
 func newSessionID() string {
 	return fmt.Sprintf("sess-%d", time.Now().UnixNano())

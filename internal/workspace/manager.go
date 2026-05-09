@@ -108,7 +108,11 @@ func (m *Manager) Remove(sessionID string) {
 }
 
 // CleanupOld removes sessions not accessed within maxAge.
+// If maxAge is zero, defaultSessionTTL is used.
 func (m *Manager) CleanupOld(maxAge time.Duration) {
+	if maxAge == 0 {
+		maxAge = defaultSessionTTL
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cutoff := time.Now().Add(-maxAge)
