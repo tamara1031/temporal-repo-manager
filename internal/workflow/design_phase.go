@@ -101,26 +101,17 @@ func DesignPhaseWorkflow(ctx workflow.Context, in DesignPhaseInput) (DesignPhase
 			workflow.WithActivityOptions(ctx, opts),
 			acts.ChatActivity,
 			codexact.ChatInput{
-				SessionID:           sessionID,
-				Message:             fmt.Sprintf("Refine the plan based on this feedback: %s\n\nRespond with JSON only: {\"theme\":\"...\",\"steps\":[{\"title\":\"...\",\"description\":\"...\"}]}", reviewResult.Feedback),
-				ContextArtifactPath: contextArtifact,
+				SessionID:       sessionID,
+				Message:         fmt.Sprintf("Refine the plan based on this feedback: %s\n\nRespond with JSON only: {\"theme\":\"...\",\"steps\":[{\"title\":\"...\",\"description\":\"...\"}]}", reviewResult.Feedback),
+				ContextArtifact: contextArtifact,
 			},
 		).Get(ctx, &refineResult); err != nil {
 			break
 		}
-		// Apply the refined plan: prefer a full JSON plan (preserving steps); fall back to theme-only.
-		raw := refineResult.Response
-		if start := strings.Index(raw, "{"); start >= 0 {
-			if end := strings.LastIndex(raw, "}"); end > start {
-				var refined codexact.Plan
-				if err := json.Unmarshal([]byte(raw[start:end+1]), &refined); err == nil {
-					if len(refined.Steps) > 0 {
-						plan = refined
-					} else if refined.Theme != "" {
-						plan.Theme = refined.Theme
-					}
-				}
-			}
+		if refined := parsePlan(refineResult.Response); len(refined.Steps) > 0 {
+			plan = refined
+		} else if refined.Theme != "" {
+			plan.Theme = refined.Theme
 		}
 	}
 
@@ -131,4 +122,19 @@ func DesignPhaseWorkflow(ctx workflow.Context, in DesignPhaseInput) (DesignPhase
 		WorkDir:         designResult.WorkDir,
 		Branch:          designResult.Branch,
 	}, nil
+}
+
+// parsePlan extracts the first JSON object from raw and unmarshals it as a Plan.
+// Returns a zero Plan (empty Steps) when no valid JSON is found.
+func parsePlan(raw string) codexact.Plan {
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start == -1 || end <= start {
+		return codexact.Plan{}
+	}
+	var p codexact.Plan
+	if err := json.Unmarshal([]byte(raw[start:end+1]), &p); err != nil {
+		return codexact.Plan{}
+	}
+	return p
 }

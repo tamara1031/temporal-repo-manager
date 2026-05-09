@@ -1,6 +1,7 @@
 package workspace_test
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -39,7 +40,7 @@ func TestNewManager_ShortSessionIDRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	_, _, err = m.GetOrCreate(t.Context(), "short", "owner/repo", "main")
+	_, _, err = m.GetOrCreate(context.Background(), "short", "owner/repo", "main")
 	if err == nil {
 		t.Error("expected error for session ID shorter than 8 chars")
 	}
