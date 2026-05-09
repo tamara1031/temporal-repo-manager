@@ -1,7 +1,9 @@
 package workflow
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	codexact "github.com/tamara1031/temporal-repo-steward/internal/activity/codex"
 	"go.temporal.io/sdk/workflow"
@@ -87,14 +89,18 @@ func DesignPhaseWorkflow(ctx workflow.Context, in DesignPhaseInput) (DesignPhase
 			workflow.WithActivityOptions(ctx, shortActOpts()),
 			acts.ChatActivity,
 			codexact.ChatInput{
-				SessionID: sessionID,
-				Message:   fmt.Sprintf("Refine the plan based on this feedback: %s", reviewResult.Feedback),
-				Context:   contextArtifact,
+				SessionID:       sessionID,
+				Message:         fmt.Sprintf("Refine the plan based on this feedback: %s\n\nRespond with JSON only: {\"theme\":\"...\",\"steps\":[{\"title\":\"...\",\"description\":\"...\"}]}", reviewResult.Feedback),
+				ContextArtifact: contextArtifact,
 			},
 		).Get(ctx, &refineResult); err != nil {
 			break
 		}
-		plan.Theme = refineResult.Response
+		if refined := parsePlan(refineResult.Response); len(refined.Steps) > 0 {
+			plan = refined
+		} else if refined.Theme != "" {
+			plan.Theme = refined.Theme
+		}
 	}
 
 	return DesignPhaseResult{
@@ -104,4 +110,19 @@ func DesignPhaseWorkflow(ctx workflow.Context, in DesignPhaseInput) (DesignPhase
 		WorkDir:         designResult.WorkDir,
 		Branch:          designResult.Branch,
 	}, nil
+}
+
+// parsePlan extracts the first JSON object from raw and unmarshals it as a Plan.
+// Returns a zero Plan (empty Steps) when no valid JSON is found.
+func parsePlan(raw string) codexact.Plan {
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start == -1 || end <= start {
+		return codexact.Plan{}
+	}
+	var p codexact.Plan
+	if err := json.Unmarshal([]byte(raw[start:end+1]), &p); err != nil {
+		return codexact.Plan{}
+	}
+	return p
 }

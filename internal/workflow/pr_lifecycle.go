@@ -16,6 +16,20 @@ const (
 	postMergePollAttempts = 6
 )
 
+// QueryCIProgress is the query name for CIProgress.
+const QueryCIProgress = "ci_progress"
+
+// CIProgress is the payload returned by the "ci_progress" query handler on
+// RobustPRMergeWorkflow. It lets operators track which CI self-heal iteration
+// is in flight and what the last observed CI outcome was.
+type CIProgress struct {
+	PRNumber      int    `json:"pr_number"`
+	PRURL         string `json:"pr_url"`
+	Iteration     int    `json:"iteration"`
+	MaxIterations int    `json:"max_iterations"`
+	LastOutcome   string `json:"last_outcome,omitempty"`
+}
+
 // RobustPRMergeInput is the input to RobustPRMergeWorkflow.
 type RobustPRMergeInput struct {
 	RepoFullName string
@@ -38,6 +52,13 @@ type RobustPRMergeResult struct {
 
 // RobustPRMergeWorkflow creates a PR, waits for CI, self-heals failures, and merges.
 func RobustPRMergeWorkflow(ctx workflow.Context, in RobustPRMergeInput) (RobustPRMergeResult, error) {
+	ciProgress := CIProgress{MaxIterations: maxFixIterations}
+	if err := workflow.SetQueryHandler(ctx, QueryCIProgress, func() (CIProgress, error) {
+		return ciProgress, nil
+	}); err != nil {
+		return RobustPRMergeResult{}, fmt.Errorf("register ci_progress query: %w", err)
+	}
+
 	var ghActs *ghact.Activities
 	var gitActs *gitact.Activities
 	var codexActs *codexact.Activities
@@ -70,7 +91,12 @@ func RobustPRMergeWorkflow(ctx workflow.Context, in RobustPRMergeInput) (RobustP
 		PRURL:    prResult.URL,
 	}
 
+	ciProgress.PRNumber = prResult.Number
+	ciProgress.PRURL = prResult.URL
+
 	for iteration := 0; iteration < maxFixIterations; iteration++ {
+		ciProgress.Iteration = iteration
+
 		var ciResult ghact.WaitForCIResult
 		if err := workflow.ExecuteActivity(
 			workflow.WithActivityOptions(ctx, ciPollActOpts()),
@@ -79,6 +105,8 @@ func RobustPRMergeWorkflow(ctx workflow.Context, in RobustPRMergeInput) (RobustP
 		).Get(ctx, &ciResult); err != nil {
 			return result, err
 		}
+
+		ciProgress.LastOutcome = string(ciResult.Outcome)
 
 		switch ciResult.Outcome {
 		case ghact.CIOutcomeExternallyMerged:
@@ -119,7 +147,11 @@ func RobustPRMergeWorkflow(ctx workflow.Context, in RobustPRMergeInput) (RobustP
 			_ = workflow.ExecuteActivity(
 				workflow.WithActivityOptions(ctx, fastGHActOpts()),
 				ghActs.FetchFailedRunLogsActivity,
-				ghact.FetchFailedRunLogsInput{WorkDir: in.WorkDir, PRNumber: prResult.Number},
+				ghact.FetchFailedRunLogsInput{
+					WorkDir:       in.WorkDir,
+					PRNumber:      prResult.Number,
+					FailedRunURLs: ciResult.FailedRuns,
+				},
 			).Get(ctx, &failLogs)
 
 			var fixResult codexact.ChatResult

@@ -266,13 +266,15 @@ func (a *Activities) ChatActivity(ctx context.Context, in ChatInput) (ChatResult
 		sessionID = newSessionID()
 	}
 
-	prompt := in.Message
+	ctxText := in.Context
 	if in.ContextArtifact != "" {
 		if data, err := os.ReadFile(in.ContextArtifact); err == nil {
-			prompt = string(data) + "\n\n" + prompt
+			ctxText = string(data)
 		}
-	} else if in.Context != "" {
-		prompt = in.Context + "\n\n" + prompt
+	}
+	prompt := in.Message
+	if ctxText != "" {
+		prompt = ctxText + "\n\n" + in.Message
 	}
 
 	workDir := ""
