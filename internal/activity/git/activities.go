@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/tamara1031/temporal-repo-steward/internal/gitutil"
@@ -136,8 +135,3 @@ func (a *Activities) CheckConflictActivity(ctx context.Context, in CheckConflict
 	return false, nil
 }
 
-// WorkspacePath returns a unique workspace path for a given repo and branch.
-func WorkspacePath(root, repoFullName, branch string) string {
-	safe := strings.ReplaceAll(repoFullName, "/", "_")
-	return filepath.Join(root, safe+"_"+branch)
-}
