@@ -3,15 +3,16 @@ package errors
 import "go.temporal.io/sdk/temporal"
 
 const (
-	CodeMissingCredentials = "MISSING_CREDENTIALS"
-	CodeInvalidGitRef      = "INVALID_GIT_REF"
-	CodeWorkdirMissing     = "WORKDIR_MISSING"
-	CodeCITimeout          = "CI_TIMEOUT"
-	CodeMaxIterations      = "MAX_ITERATIONS"
-	CodeNoFixDiff          = "NO_FIX_DIFF"
-	CodeAdvisorAbort       = "ADVISOR_ABORT"
-	CodePlannerInvalid     = "PLANNER_INVALID"
-	CodeInvalidGitHubOut   = "INVALID_GITHUB_OUTPUT"
+	CodeMissingCredentials  = "MISSING_CREDENTIALS"
+	CodeInvalidGitRef       = "INVALID_GIT_REF"
+	CodeWorkdirMissing      = "WORKDIR_MISSING"
+	CodeCITimeout           = "CI_TIMEOUT"
+	CodeMaxIterations       = "MAX_ITERATIONS"
+	CodeNoFixDiff           = "NO_FIX_DIFF"
+	CodeAdvisorAbort        = "ADVISOR_ABORT"
+	CodePlannerInvalid      = "PLANNER_INVALID"
+	CodeAdvisorOutputInvalid = "ADVISOR_OUTPUT_INVALID"
+	CodeInvalidGitHubOut    = "INVALID_GITHUB_OUTPUT"
 )
 
 func NewNonRetryable(code, message string) error {
@@ -40,4 +41,12 @@ func AdvisorAbort(rationale string) error {
 
 func NewWorkdirMissing(path string) error {
 	return NewNonRetryable(CodeWorkdirMissing, "workspace directory missing: "+path)
+}
+
+func NewPlannerInvalid(raw string) error {
+	return NewNonRetryable(CodePlannerInvalid, "planner returned unparseable output: "+raw)
+}
+
+func NewAdvisorOutputInvalid(raw string) error {
+	return NewNonRetryable(CodeAdvisorOutputInvalid, "advisor returned unparseable output: "+raw)
 }

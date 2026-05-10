@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tamara1031/temporal-repo-steward/internal/codex"
+	rserrors "github.com/tamara1031/temporal-repo-steward/internal/errors"
 	"github.com/tamara1031/temporal-repo-steward/internal/gitutil"
 	"github.com/tamara1031/temporal-repo-steward/internal/workspace"
 	"go.temporal.io/sdk/activity"
@@ -157,6 +158,7 @@ func (a *Activities) DesignActivity(ctx context.Context, in DesignInput) (Design
 
 	var plan Plan
 	if err := ExtractJSON(raw, &plan); err != nil {
+		slog.Warn("design: codex returned unparseable JSON, treating as no-step plan", "error", err, "raw_len", len(raw))
 		plan = Plan{Theme: in.Brief}
 	}
 
@@ -323,6 +325,10 @@ func (a *Activities) ConsultAdvisorActivity(ctx context.Context, summary string)
 
 	var verdict AdvisorVerdict
 	if err := ExtractJSON(raw, &verdict); err != nil {
+		if raw == "" {
+			return AdvisorVerdict{}, rserrors.NewAdvisorOutputInvalid("empty response from advisor model")
+		}
+		slog.Warn("advisor: unparseable JSON, defaulting to retry", "error", err, "raw_len", len(raw))
 		return AdvisorVerdict{Verdict: AdvisorDecisionRetry, Rationale: raw}, nil
 	}
 
