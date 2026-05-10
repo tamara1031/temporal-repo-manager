@@ -49,6 +49,18 @@ func TestErrorConstructors(t *testing.T) {
 			code:    rserrors.CodeWorkdirMissing,
 			msgFrag: "/tmp/missing",
 		},
+		{
+			name:    "planner invalid",
+			err:     rserrors.NewPlannerInvalid("not json"),
+			code:    rserrors.CodePlannerInvalid,
+			msgFrag: "not json",
+		},
+		{
+			name:    "advisor output invalid",
+			err:     rserrors.NewAdvisorOutputInvalid("garbage"),
+			code:    rserrors.CodeAdvisorOutputInvalid,
+			msgFrag: "garbage",
+		},
 	}
 
 	for _, c := range cases {
