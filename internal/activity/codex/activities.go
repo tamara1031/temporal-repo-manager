@@ -15,6 +15,24 @@ import (
 	"go.temporal.io/sdk/activity"
 )
 
+// ReviewVerdict is the typed outcome of a ReviewActivity call.
+type ReviewVerdict string
+
+const (
+	ReviewVerdictOK            ReviewVerdict = "ok"
+	ReviewVerdictSuggest       ReviewVerdict = "suggest"
+	ReviewVerdictCriticalBlock ReviewVerdict = "critical_block"
+)
+
+// AdvisorDecision is the typed outcome of a ConsultAdvisorActivity call.
+type AdvisorDecision string
+
+const (
+	AdvisorDecisionRetry          AdvisorDecision = "retry"
+	AdvisorDecisionAbort          AdvisorDecision = "abort"
+	AdvisorDecisionChangeStrategy AdvisorDecision = "change-strategy"
+)
+
 // Step is a single refactoring step.
 type Step struct {
 	Title       string `json:"title"`
@@ -69,9 +87,9 @@ type ReviewInput struct {
 
 // ReviewResult is the output of ReviewActivity.
 type ReviewResult struct {
-	Verdict     string   `json:"verdict"` // "ok" | "suggest" | "critical_block"
-	Feedback    string   `json:"feedback"`
-	Suggestions []string `json:"suggestions"`
+	Verdict     ReviewVerdict `json:"verdict"`
+	Feedback    string        `json:"feedback"`
+	Suggestions []string      `json:"suggestions"`
 }
 
 // ChatInput is the input to ChatActivity.
@@ -90,9 +108,9 @@ type ChatResult struct {
 
 // AdvisorVerdict is the structured output of ConsultAdvisorActivity.
 type AdvisorVerdict struct {
-	Verdict         string `json:"verdict"` // "retry" | "abort" | "change-strategy"
-	Rationale       string `json:"rationale"`
-	SuggestedAction string `json:"suggested_action"`
+	Verdict         AdvisorDecision `json:"verdict"`
+	Rationale       string          `json:"rationale"`
+	SuggestedAction string          `json:"suggested_action"`
 }
 
 // Activities holds direct codex CLI + workspace dependencies.
@@ -250,7 +268,7 @@ func (a *Activities) ReviewActivity(ctx context.Context, in ReviewInput) (Review
 
 	var result ReviewResult
 	if err := ExtractJSON(raw, &result); err != nil {
-		result = ReviewResult{Verdict: "suggest", Feedback: raw}
+		result = ReviewResult{Verdict: ReviewVerdictSuggest, Feedback: raw}
 	}
 
 	slog.Info("review complete", "verdict", result.Verdict, "concern", in.Concern)
@@ -305,7 +323,7 @@ func (a *Activities) ConsultAdvisorActivity(ctx context.Context, summary string)
 
 	var verdict AdvisorVerdict
 	if err := ExtractJSON(raw, &verdict); err != nil {
-		return AdvisorVerdict{Verdict: "retry", Rationale: raw}, nil
+		return AdvisorVerdict{Verdict: AdvisorDecisionRetry, Rationale: raw}, nil
 	}
 
 	slog.Info("advisor verdict", "verdict", verdict.Verdict)
