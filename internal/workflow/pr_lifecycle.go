@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	maxFixIterations     = 8
+	maxFixIterations      = 8
 	postMergePollAttempts = 6
+	maxAdvisorConsultsCI  = 2
 )
 
 // QueryCIProgress is the query name for CIProgress.
@@ -94,6 +95,8 @@ func RobustPRMergeWorkflow(ctx workflow.Context, in RobustPRMergeInput) (RobustP
 	ciProgress.PRNumber = prResult.Number
 	ciProgress.PRURL = prResult.URL
 
+	advisorConsults := 0
+
 	for iteration := 0; iteration < maxFixIterations; iteration++ {
 		ciProgress.Iteration = iteration
 
@@ -154,6 +157,29 @@ func RobustPRMergeWorkflow(ctx workflow.Context, in RobustPRMergeInput) (RobustP
 				},
 			).Get(ctx, &failLogs)
 
+			// On the 2nd+ failure, consult the advisor before attempting a fix.
+			// change-strategy is treated as retry (same as RefactorStepWorkflow) since
+			// there is no concrete alternative strategy available in the CI context.
+			if iteration >= 1 && advisorConsults < maxAdvisorConsultsCI {
+				summary := fmt.Sprintf(
+					"PR #%d CI self-heal iteration %d/%d.\nFailed logs (truncated to 2 KiB):\n%.2048s",
+					prResult.Number, iteration+1, maxFixIterations, failLogs,
+				)
+				var verdict codexact.AdvisorVerdict
+				if err := workflow.ExecuteActivity(
+					workflow.WithActivityOptions(ctx, shortActOpts()),
+					codexActs.ConsultAdvisorActivity,
+					summary,
+				).Get(ctx, &verdict); err == nil {
+					advisorConsults++
+					if verdict.Verdict == codexact.AdvisorDecisionAbort {
+						slog.Info("CI self-heal: advisor aborted", "rationale", verdict.Rationale)
+						return result, rserrors.AdvisorAbort(verdict.Rationale)
+					}
+					slog.Info("CI self-heal: advisor verdict", "verdict", verdict.Verdict, "rationale", verdict.Rationale)
+				}
+			}
+
 			var fixResult codexact.ChatResult
 			if err := workflow.ExecuteActivity(
 				workflow.WithActivityOptions(ctx, longCodexActOpts()),
@@ -172,6 +198,25 @@ func RobustPRMergeWorkflow(ctx workflow.Context, in RobustPRMergeInput) (RobustP
 				gitActs.CommitAllActivity,
 				gitact.CommitAllInput{WorkDir: in.WorkDir, Message: fmt.Sprintf("fix: CI self-heal (iteration %d)", iteration+1)},
 			).Get(ctx, &commitSHA); err != nil {
+				// No diff produced — consult advisor if budget allows before giving up.
+				if advisorConsults < maxAdvisorConsultsCI {
+					summary := fmt.Sprintf(
+						"PR #%d CI self-heal iteration %d: codex produced no diff.\nFailed logs (truncated to 2 KiB):\n%.2048s",
+						prResult.Number, iteration+1, failLogs,
+					)
+					var verdict codexact.AdvisorVerdict
+					if err2 := workflow.ExecuteActivity(
+						workflow.WithActivityOptions(ctx, shortActOpts()),
+						codexActs.ConsultAdvisorActivity,
+						summary,
+					).Get(ctx, &verdict); err2 == nil {
+						advisorConsults++
+						if verdict.Verdict == codexact.AdvisorDecisionAbort {
+							slog.Info("CI self-heal: advisor aborted after no-diff", "rationale", verdict.Rationale)
+							return result, rserrors.AdvisorAbort(verdict.Rationale)
+						}
+					}
+				}
 				return result, rserrors.NewNoFixDiff()
 			}
 			if err := workflow.ExecuteActivity(
