@@ -69,6 +69,7 @@ func DesignPhaseWorkflow(ctx workflow.Context, in DesignPhaseInput) (DesignPhase
 				ContextArtifact: contextArtifact,
 			},
 		).Get(ctx, &reviewResult); err != nil {
+			workflow.GetLogger(ctx).Error("design review activity failed, accepting current plan", "error", err, "round", round)
 			break
 		}
 
@@ -97,6 +98,7 @@ func DesignPhaseWorkflow(ctx workflow.Context, in DesignPhaseInput) (DesignPhase
 				ContextArtifact: contextArtifact,
 			},
 		).Get(ctx, &refineResult); err != nil {
+			workflow.GetLogger(ctx).Error("design refine activity failed, stopping refinement", "error", err, "round", round)
 			break
 		}
 		if refined := parsePlan(refineResult.Response); len(refined.Steps) > 0 {

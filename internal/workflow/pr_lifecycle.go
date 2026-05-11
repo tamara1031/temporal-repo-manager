@@ -163,6 +163,7 @@ func RobustPRMergeWorkflow(ctx workflow.Context, in RobustPRMergeInput) (RobustP
 					Message:   fmt.Sprintf("Fix this CI failure. Apply the fix to the files in the working directory.\n\nFailed CI logs:\n%s", failLogs),
 				},
 			).Get(ctx, &fixResult); err != nil {
+				workflow.GetLogger(ctx).Error("codex self-heal chat failed, retrying CI poll", "error", err, "iteration", iteration)
 				continue
 			}
 
