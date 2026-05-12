@@ -23,6 +23,16 @@ const (
 	PhaseDone      RefactorPhase = "done"
 )
 
+// StepRecord captures the outcome of a single refactoring step for audit and
+// operational visibility. It is accumulated in RefactorProgress (live query)
+// and PeriodicRefactorResult (final result) so operators can correlate commit
+// SHAs with step titles without parsing logs.
+type StepRecord struct {
+	Title     string `json:"title"`
+	Status    string `json:"status"`    // "completed" | "budget-halted" | "circuit-broken" | "error"
+	CommitSHA string `json:"commit_sha,omitempty"`
+}
+
 // RefactorProgress is the payload returned by the "progress" query handler on
 // PeriodicRefactorWorkflow. It lets operators inspect a long-running cycle in
 // real time without parsing logs.
@@ -30,6 +40,7 @@ type RefactorProgress struct {
 	Phase      RefactorPhase `json:"phase"`
 	StepsDone  int           `json:"steps_done"`
 	TotalSteps int           `json:"total_steps"`
+	Steps      []StepRecord  `json:"steps,omitempty"`
 	PRNumber   int           `json:"pr_number,omitempty"`
 	PRURL      string        `json:"pr_url,omitempty"`
 	Skipped    bool          `json:"skipped,omitempty"`
@@ -50,6 +61,7 @@ type PeriodicRefactorInput struct {
 type PeriodicRefactorResult struct {
 	SessionID  string
 	StepsDone  int
+	Steps      []StepRecord
 	PRNumber   int
 	PRURL      string
 	PROutcome  string
@@ -110,6 +122,7 @@ func PeriodicRefactorWorkflow(ctx workflow.Context, in PeriodicRefactorInput) (P
 	progress.Phase = PhaseImplement
 	progress.TotalSteps = limit
 
+	var stepRecords []StepRecord
 	stepsDone := 0
 	for i := 0; i < limit; i++ {
 		var stepResult RefactorStepResult
@@ -122,8 +135,17 @@ func PeriodicRefactorWorkflow(ctx workflow.Context, in PeriodicRefactorInput) (P
 				ContextArtifact: contextArtifact,
 			},
 		).Get(ctx, &stepResult); err != nil {
+			stepRecords = append(stepRecords, StepRecord{Title: steps[i].Title, Status: "error"})
+			progress.Steps = stepRecords
 			break
 		}
+		record := StepRecord{
+			Title:     steps[i].Title,
+			Status:    stepResult.Kind,
+			CommitSHA: stepResult.CommitSHA,
+		}
+		stepRecords = append(stepRecords, record)
+		progress.Steps = stepRecords
 		if stepResult.Kind == "circuit-broken" {
 			break
 		}
@@ -139,6 +161,7 @@ func PeriodicRefactorWorkflow(ctx workflow.Context, in PeriodicRefactorInput) (P
 			SessionID:  sessionID,
 			Skipped:    true,
 			SkipReason: "no steps completed successfully",
+			Steps:      stepRecords,
 		}, nil
 	}
 
@@ -163,6 +186,7 @@ func PeriodicRefactorWorkflow(ctx workflow.Context, in PeriodicRefactorInput) (P
 		return PeriodicRefactorResult{
 			SessionID: sessionID,
 			StepsDone: stepsDone,
+			Steps:     stepRecords,
 		}, fmt.Errorf("PR lifecycle: %w", err)
 	}
 
@@ -173,6 +197,7 @@ func PeriodicRefactorWorkflow(ctx workflow.Context, in PeriodicRefactorInput) (P
 	return PeriodicRefactorResult{
 		SessionID: sessionID,
 		StepsDone: stepsDone,
+		Steps:     stepRecords,
 		PRNumber:  prResult.PRNumber,
 		PRURL:     prResult.PRURL,
 		PROutcome: prResult.Outcome,
