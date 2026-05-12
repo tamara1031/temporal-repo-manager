@@ -109,3 +109,73 @@ func TestExtractJSON_ReviewResult(t *testing.T) {
 		t.Errorf("verdict: got %q", r.Verdict)
 	}
 }
+
+// ── MergePlan ─────────────────────────────────────────────────────────────────
+
+func TestMergePlan_FullReplacement(t *testing.T) {
+	base := codex.Plan{
+		Theme: "original",
+		Steps: []codex.Step{{Title: "s1", Description: "d1"}},
+	}
+	refined := codex.Plan{
+		Theme: "refined",
+		Steps: []codex.Step{{Title: "r1", Description: "rd1"}, {Title: "r2", Description: "rd2"}},
+	}
+	got := codex.MergePlan(base, refined)
+	if got.Theme != "refined" {
+		t.Errorf("theme: got %q, want %q", got.Theme, "refined")
+	}
+	if len(got.Steps) != 2 {
+		t.Errorf("steps length: got %d, want 2", len(got.Steps))
+	}
+	if got.Steps[0].Title != "r1" {
+		t.Errorf("step[0].title: got %q", got.Steps[0].Title)
+	}
+}
+
+func TestMergePlan_ThemeOnlyUpdate(t *testing.T) {
+	base := codex.Plan{
+		Theme: "original",
+		Steps: []codex.Step{{Title: "s1", Description: "d1"}},
+	}
+	refined := codex.Plan{Theme: "better theme"} // no steps
+
+	got := codex.MergePlan(base, refined)
+	if got.Theme != "better theme" {
+		t.Errorf("theme: got %q, want %q", got.Theme, "better theme")
+	}
+	// Original steps must be preserved.
+	if len(got.Steps) != 1 || got.Steps[0].Title != "s1" {
+		t.Errorf("steps: got %+v, want original [s1]", got.Steps)
+	}
+}
+
+func TestMergePlan_NoChange_WhenRefinedIsEmpty(t *testing.T) {
+	base := codex.Plan{
+		Theme: "original",
+		Steps: []codex.Step{{Title: "s1", Description: "d1"}},
+	}
+	got := codex.MergePlan(base, codex.Plan{})
+	if got.Theme != "original" {
+		t.Errorf("theme: got %q, want %q", got.Theme, "original")
+	}
+	if len(got.Steps) != 1 {
+		t.Errorf("steps length: got %d, want 1", len(got.Steps))
+	}
+}
+
+func TestMergePlan_EmptySteps_DoesNotReplace(t *testing.T) {
+	base := codex.Plan{
+		Theme: "original",
+		Steps: []codex.Step{{Title: "s1"}},
+	}
+	// refined has an explicit empty slice — not a full replacement.
+	refined := codex.Plan{Theme: "new theme", Steps: []codex.Step{}}
+	got := codex.MergePlan(base, refined)
+	if got.Theme != "new theme" {
+		t.Errorf("theme: got %q, want %q", got.Theme, "new theme")
+	}
+	if len(got.Steps) != 1 || got.Steps[0].Title != "s1" {
+		t.Errorf("steps: expected original to be preserved, got %+v", got.Steps)
+	}
+}
