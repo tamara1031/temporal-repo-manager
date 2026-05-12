@@ -74,10 +74,10 @@ func DesignPhaseWorkflow(ctx workflow.Context, in DesignPhaseInput) (DesignPhase
 			break
 		}
 
-		if reviewResult.Verdict == "ok" {
+		if reviewResult.Verdict == codexact.VerdictOK {
 			break
 		}
-		if reviewResult.Verdict == "critical_block" {
+		if reviewResult.Verdict == codexact.VerdictCriticalBlock {
 			return DesignPhaseResult{
 				Skipped:    true,
 				SkipReason: "design review critical_block: " + reviewResult.Feedback,

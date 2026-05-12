@@ -60,7 +60,7 @@ func RefactorStepWorkflow(ctx workflow.Context, in RefactorStepInput) (RefactorS
 				continue
 			}
 
-			if reviewResult.Verdict == "critical_block" {
+			if reviewResult.Verdict == codexact.VerdictCriticalBlock {
 				if iter == maxStepIter-1 {
 					advisorSummary := fmt.Sprintf("Step: %s\nConcern: %s\nFeedback: %s", in.Step.Title, concern, reviewResult.Feedback)
 					var verdict codexact.AdvisorVerdict
@@ -68,7 +68,7 @@ func RefactorStepWorkflow(ctx workflow.Context, in RefactorStepInput) (RefactorS
 						workflow.WithActivityOptions(ctx, shortActOpts()),
 						acts.ConsultAdvisorActivity,
 						advisorSummary,
-					).Get(ctx, &verdict); err == nil && verdict.Verdict == "abort" {
+					).Get(ctx, &verdict); err == nil && verdict.Verdict == codexact.AdvisorVerdictKindAbort {
 						return RefactorStepResult{Kind: "circuit-broken"}, rserrors.AdvisorAbort(verdict.Rationale)
 					}
 				}
