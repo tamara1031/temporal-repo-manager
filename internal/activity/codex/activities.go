@@ -97,11 +97,20 @@ type ChatResult struct {
 	Response  string `json:"response"`
 }
 
+// AdvisorVerdictKind is the typed decision returned by ConsultAdvisorActivity.
+type AdvisorVerdictKind string
+
+const (
+	AdvisorVerdictRetry          AdvisorVerdictKind = "retry"
+	AdvisorVerdictAbort          AdvisorVerdictKind = "abort"
+	AdvisorVerdictChangeStrategy AdvisorVerdictKind = "change-strategy"
+)
+
 // AdvisorVerdict is the structured output of ConsultAdvisorActivity.
 type AdvisorVerdict struct {
-	Verdict         string `json:"verdict"` // "retry" | "abort" | "change-strategy"
-	Rationale       string `json:"rationale"`
-	SuggestedAction string `json:"suggested_action"`
+	Verdict         AdvisorVerdictKind `json:"verdict"`
+	Rationale       string             `json:"rationale"`
+	SuggestedAction string             `json:"suggested_action"`
 }
 
 // Activities holds direct codex CLI + workspace dependencies.
@@ -314,7 +323,7 @@ func (a *Activities) ConsultAdvisorActivity(ctx context.Context, summary string)
 
 	var verdict AdvisorVerdict
 	if err := ExtractJSON(raw, &verdict); err != nil {
-		return AdvisorVerdict{Verdict: "retry", Rationale: raw}, nil
+		return AdvisorVerdict{Verdict: AdvisorVerdictRetry, Rationale: raw}, nil
 	}
 
 	slog.Info("advisor verdict", "verdict", verdict.Verdict)

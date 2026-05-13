@@ -82,7 +82,7 @@ func (s *refactorStepSuite) Test_BudgetHalted_AdvisorRetries() {
 	// On the last iteration the advisor is consulted; it returns "retry",
 	// so the workflow does not abort — it simply exhausts its budget.
 	env.OnActivity(acts.ConsultAdvisorActivity, mock.Anything, mock.Anything).
-		Return(codexact.AdvisorVerdict{Verdict: "retry", Rationale: "maybe next time"}, nil)
+		Return(codexact.AdvisorVerdict{Verdict: codexact.AdvisorVerdictRetry, Rationale: "maybe next time"}, nil)
 
 	env.ExecuteWorkflow(workflow.RefactorStepWorkflow, workflow.RefactorStepInput{
 		SessionID: "test-session-00000001",
@@ -109,7 +109,7 @@ func (s *refactorStepSuite) Test_CircuitBroken_AdvisorAborts() {
 		Return(codexact.ReviewResult{Verdict: codexact.ReviewVerdictCriticalBlock, Feedback: "dangerous"}, nil)
 
 	env.OnActivity(acts.ConsultAdvisorActivity, mock.Anything, mock.Anything).
-		Return(codexact.AdvisorVerdict{Verdict: "abort", Rationale: "too risky"}, nil)
+		Return(codexact.AdvisorVerdict{Verdict: codexact.AdvisorVerdictAbort, Rationale: "too risky"}, nil)
 
 	env.ExecuteWorkflow(workflow.RefactorStepWorkflow, workflow.RefactorStepInput{
 		SessionID: "test-session-00000001",

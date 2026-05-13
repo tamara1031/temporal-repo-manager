@@ -77,7 +77,7 @@ func RefactorStepWorkflow(ctx workflow.Context, in RefactorStepInput) (RefactorS
 						workflow.WithActivityOptions(ctx, shortActOpts()),
 						acts.ConsultAdvisorActivity,
 						advisorSummary,
-					).Get(ctx, &verdict); err == nil && verdict.Verdict == "abort" {
+					).Get(ctx, &verdict); err == nil && verdict.Verdict == codexact.AdvisorVerdictAbort {
 						return RefactorStepResult{Kind: StepKindCircuitBroken}, rserrors.AdvisorAbort(verdict.Rationale)
 					}
 				}
