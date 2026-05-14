@@ -46,7 +46,7 @@ func RefactorStepWorkflow(ctx workflow.Context, in RefactorStepInput) (RefactorS
 		}
 
 		blocked := false
-		for _, concern := range []string{"correctness", "quality"} {
+		for _, concern := range []string{"correctness", "quality", "security"} {
 			var reviewResult codexact.ReviewResult
 			if err := workflow.ExecuteActivity(
 				workflow.WithActivityOptions(ctx, shortActOpts()),

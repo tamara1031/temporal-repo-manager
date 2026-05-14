@@ -16,6 +16,45 @@ import (
 // Activities holds GitHub CLI operation implementations.
 type Activities struct{}
 
+// statusCheck is a single entry in the GitHub API status-check rollup.
+type statusCheck struct {
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	Name       string `json:"name"`
+	DetailsURL string `json:"detailsUrl"`
+}
+
+// ciChecks summarises a status-check rollup slice at a single point in time.
+type ciChecks struct {
+	// empty is true when the rollup contained no checks at all; CI may not have
+	// queued its runs yet.  Callers should wait and re-poll rather than treat
+	// this as a definitive success.
+	empty bool
+	// allDone is true when every check has reached a terminal status.
+	allDone bool
+	// anyFailed is true when at least one completed check had a failure conclusion.
+	anyFailed  bool
+	failedURLs []string
+}
+
+// evaluateChecks distils a status-check rollup slice into a ciChecks summary.
+// A check is considered failed when its Conclusion is "FAILURE" or "TIMED_OUT".
+func evaluateChecks(checks []statusCheck) ciChecks {
+	if len(checks) == 0 {
+		return ciChecks{empty: true}
+	}
+	result := ciChecks{allDone: true}
+	for _, c := range checks {
+		if c.Status != "COMPLETED" {
+			result.allDone = false
+		} else if c.Conclusion == "FAILURE" || c.Conclusion == "TIMED_OUT" {
+			result.anyFailed = true
+			result.failedURLs = append(result.failedURLs, c.DetailsURL)
+		}
+	}
+	return result
+}
+
 // CreatePRInput is the input to CreatePRActivity.
 type CreatePRInput struct {
 	WorkDir    string
@@ -83,6 +122,13 @@ type WaitForCIResult struct {
 	FailedRuns []string
 }
 
+// minEmptyPollsBeforeSuccess is the number of consecutive empty status-check
+// responses that must be observed before WaitForCIActivity declares success.
+// GitHub Actions needs a moment to queue its check runs after a push; treating
+// the very first empty rollup as "no CI configured" would cause the workflow to
+// auto-merge before CI has had a chance to start.
+const minEmptyPollsBeforeSuccess = 2
+
 // WaitForCIActivity polls the PR's CI status until it settles.
 func (a *Activities) WaitForCIActivity(ctx context.Context, in WaitForCIInput) (WaitForCIResult, error) {
 	maxWait := time.Duration(in.MaxWaitSec) * time.Second
@@ -91,6 +137,8 @@ func (a *Activities) WaitForCIActivity(ctx context.Context, in WaitForCIInput) (
 	}
 	deadline := time.Now().Add(maxWait)
 	pollInterval := 30 * time.Second
+
+	emptyPollCount := 0
 
 	for {
 		if time.Now().After(deadline) {
@@ -107,13 +155,8 @@ func (a *Activities) WaitForCIActivity(ctx context.Context, in WaitForCIInput) (
 		}
 
 		var pr struct {
-			State             string `json:"state"`
-			StatusCheckRollup []struct {
-				Status     string `json:"status"`
-				Conclusion string `json:"conclusion"`
-				Name       string `json:"name"`
-				DetailsURL string `json:"detailsUrl"`
-			} `json:"statusCheckRollup"`
+			State             string        `json:"state"`
+			StatusCheckRollup []statusCheck `json:"statusCheckRollup"`
 		}
 		if err := json.Unmarshal([]byte(out), &pr); err != nil {
 			slog.Warn("parse pr view output failed", "error", err)
@@ -128,23 +171,28 @@ func (a *Activities) WaitForCIActivity(ctx context.Context, in WaitForCIInput) (
 			return WaitForCIResult{Outcome: CIOutcomeExternallyClosed}, nil
 		}
 
-		allDone, anyFailed := true, false
-		var failedRuns []string
-		for _, check := range pr.StatusCheckRollup {
-			if check.Status != "COMPLETED" {
-				allDone = false
-			} else if check.Conclusion == "FAILURE" || check.Conclusion == "TIMED_OUT" {
-				anyFailed = true
-				failedRuns = append(failedRuns, check.DetailsURL)
-			}
-		}
+		checks := evaluateChecks(pr.StatusCheckRollup)
 
-		if !allDone {
+		if checks.empty {
+			emptyPollCount++
+			if emptyPollCount < minEmptyPollsBeforeSuccess {
+				slog.Info("CI checks not yet visible, waiting for next poll",
+					"pr", in.PRNumber, "emptyPollCount", emptyPollCount)
+				sleep(ctx, pollInterval)
+				continue
+			}
+			slog.Info("no CI checks after grace period, treating as no-CI success",
+				"pr", in.PRNumber)
+			return WaitForCIResult{Outcome: CIOutcomeSuccess}, nil
+		}
+		emptyPollCount = 0
+
+		if !checks.allDone {
 			sleep(ctx, pollInterval)
 			continue
 		}
-		if anyFailed {
-			return WaitForCIResult{Outcome: CIOutcomeFailure, FailedRuns: failedRuns}, nil
+		if checks.anyFailed {
+			return WaitForCIResult{Outcome: CIOutcomeFailure, FailedRuns: checks.failedURLs}, nil
 		}
 		return WaitForCIResult{Outcome: CIOutcomeSuccess}, nil
 	}

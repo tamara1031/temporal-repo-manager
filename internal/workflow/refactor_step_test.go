@@ -120,6 +120,42 @@ func (s *refactorStepSuite) Test_CircuitBroken_AdvisorAborts() {
 	s.Error(env.GetWorkflowError())
 }
 
+// Test_SecurityConcernIsChecked verifies that the security review pass (the
+// third concern in the list) is actually executed and can block an iteration.
+// The test sequences mock responses so that correctness and quality pass but
+// security blocks on the first iteration, then all three pass on the retry.
+func (s *refactorStepSuite) Test_SecurityConcernIsChecked() {
+	env := s.NewTestWorkflowEnvironment()
+	var acts *codexact.Activities
+
+	env.OnActivity(acts.ImplementActivity, mock.Anything, mock.Anything).
+		Return(codexact.ImplementResult{HasChanges: true, CommitSHA: "sha1"}, nil)
+
+	// Iteration 0 — correctness and quality pass, security blocks.
+	env.OnActivity(acts.ReviewActivity, mock.Anything, mock.Anything).
+		Return(codexact.ReviewResult{Verdict: "ok"}, nil).Once() // correctness
+	env.OnActivity(acts.ReviewActivity, mock.Anything, mock.Anything).
+		Return(codexact.ReviewResult{Verdict: "ok"}, nil).Once() // quality
+	env.OnActivity(acts.ReviewActivity, mock.Anything, mock.Anything).
+		Return(codexact.ReviewResult{Verdict: "critical_block", Feedback: "SQL injection risk"}, nil).Once() // security
+
+	// Iteration 1 — all three concerns pass → completed.
+	env.OnActivity(acts.ReviewActivity, mock.Anything, mock.Anything).
+		Return(codexact.ReviewResult{Verdict: "ok"}, nil)
+
+	env.ExecuteWorkflow(workflow.RefactorStepWorkflow, workflow.RefactorStepInput{
+		SessionID: "test-session-00000001",
+		Step:      codexact.Step{Title: "step1", Description: "do something"},
+	})
+
+	s.True(env.IsWorkflowCompleted())
+	s.NoError(env.GetWorkflowError())
+	var result workflow.RefactorStepResult
+	s.NoError(env.GetWorkflowResult(&result))
+	s.Equal("completed", result.Kind)
+	s.Equal("sha1", result.CommitSHA)
+}
+
 // Test_Retries_WhenFirstIterationBlocked verifies that a "correctness" block
 // on the first iteration triggers a retry and the second iteration succeeds.
 func (s *refactorStepSuite) Test_Retries_WhenFirstIterationBlocked() {
