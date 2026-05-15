@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	ghact "github.com/tamara1031/temporal-repo-steward/internal/activity/github"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
@@ -52,7 +53,7 @@ type PeriodicRefactorResult struct {
 	StepsDone  int
 	PRNumber   int
 	PRURL      string
-	PROutcome  string
+	PROutcome  ghact.PROutcome
 	Skipped    bool
 	SkipReason string
 }
