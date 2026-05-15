@@ -47,7 +47,7 @@ type RobustPRMergeResult struct {
 	PRNumber int
 	PRURL    string
 	Merged   bool
-	Outcome  string // "merged" | "merge-queued" | "closed-externally" | "auto-merge-disabled"
+	Outcome  ghact.PROutcome
 }
 
 // RobustPRMergeWorkflow creates a PR, waits for CI, self-heals failures, and merges.
@@ -110,15 +110,15 @@ func RobustPRMergeWorkflow(ctx workflow.Context, in RobustPRMergeInput) (RobustP
 
 		switch ciResult.Outcome {
 		case ghact.CIOutcomeExternallyMerged:
-			result.Outcome = "merged-externally"
+			result.Outcome = ghact.PROutcomeExternallyMerged
 			result.Merged = true
 			return result, nil
 		case ghact.CIOutcomeExternallyClosed:
-			result.Outcome = "closed-externally"
+			result.Outcome = ghact.PROutcomeExternallyClosed
 			return result, nil
 		case ghact.CIOutcomeSuccess:
 			if !in.AutoMerge {
-				result.Outcome = "auto-merge-disabled"
+				result.Outcome = ghact.PROutcomeAutoMergeDisabled
 				return result, nil
 			}
 			if err := workflow.ExecuteActivity(
@@ -128,14 +128,14 @@ func RobustPRMergeWorkflow(ctx workflow.Context, in RobustPRMergeInput) (RobustP
 			).Get(ctx, nil); err != nil {
 				return result, fmt.Errorf("merge: %w", err)
 			}
-			var finalOutcome ghact.CIOutcome
+			var finalOutcome ghact.PROutcome
 			_ = workflow.ExecuteActivity(
 				workflow.WithActivityOptions(ctx, fastGHActOpts()),
 				ghActs.ObservePRStateActivity,
 				ghact.ObservePRStateInput{WorkDir: in.WorkDir, PRNumber: prResult.Number, Attempts: postMergePollAttempts},
 			).Get(ctx, &finalOutcome)
 			result.Merged = true
-			result.Outcome = string(finalOutcome)
+			result.Outcome = finalOutcome
 			return result, nil
 		case ghact.CIOutcomeFailure:
 			if iteration == maxFixIterations-1 {
