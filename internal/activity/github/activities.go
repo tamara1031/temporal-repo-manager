@@ -229,6 +229,23 @@ func runIDFromURL(u string) string {
 	return rest
 }
 
+// PROutcome describes the final disposition of a PR managed by RobustPRMergeWorkflow.
+// It is distinct from CIOutcome, which describes the result of CI check runs.
+type PROutcome string
+
+const (
+	// PROutcomeMerged means the bot successfully squash-merged the PR.
+	PROutcomeMerged PROutcome = "merged"
+	// PROutcomeExternallyMerged means the PR was merged by a human before the bot could act.
+	PROutcomeExternallyMerged PROutcome = "merged-externally"
+	// PROutcomeExternallyClosed means the PR was closed without merging.
+	PROutcomeExternallyClosed PROutcome = "closed-externally"
+	// PROutcomeMergeQueued means the PR entered a merge queue; final state is pending.
+	PROutcomeMergeQueued PROutcome = "merge-queued"
+	// PROutcomeAutoMergeDisabled means CI passed but AutoMerge was disabled by configuration.
+	PROutcomeAutoMergeDisabled PROutcome = "auto-merge-disabled"
+)
+
 // MergePRInput is the input to MergePRActivity.
 type MergePRInput struct {
 	WorkDir  string
@@ -253,7 +270,8 @@ type ObservePRStateInput struct {
 }
 
 // ObservePRStateActivity polls the PR state until it is merged or closed.
-func (a *Activities) ObservePRStateActivity(ctx context.Context, in ObservePRStateInput) (CIOutcome, error) {
+// It returns a PROutcome (not a CIOutcome) because it observes post-merge PR state.
+func (a *Activities) ObservePRStateActivity(ctx context.Context, in ObservePRStateInput) (PROutcome, error) {
 	attempts := in.Attempts
 	if attempts == 0 {
 		attempts = 6
@@ -285,13 +303,13 @@ func (a *Activities) ObservePRStateActivity(ctx context.Context, in ObservePRSta
 
 		switch strings.ToUpper(pr.State) {
 		case "MERGED":
-			return CIOutcomeSuccess, nil
+			return PROutcomeMerged, nil
 		case "CLOSED":
-			return CIOutcomeExternallyClosed, nil
+			return PROutcomeExternallyClosed, nil
 		}
 		sleep(ctx, interval)
 	}
-	return CIOutcomeMergeQueued, nil
+	return PROutcomeMergeQueued, nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
