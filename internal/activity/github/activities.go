@@ -77,6 +77,19 @@ const (
 	CIOutcomeMergeQueued      CIOutcome = "merge-queued"
 )
 
+// PROutcome describes the terminal disposition of a PR lifecycle managed by
+// RobustPRMergeWorkflow. It is intentionally distinct from CIOutcome because
+// it describes PR state, not CI check state.
+type PROutcome string
+
+const (
+	PROutcomeMerged            PROutcome = "merged"
+	PROutcomeMergedExternally  PROutcome = "merged-externally"
+	PROutcomeClosedExternally  PROutcome = "closed-externally"
+	PROutcomeAutoMergeDisabled PROutcome = "auto-merge-disabled"
+	PROutcomeMergeQueued       PROutcome = "merge-queued"
+)
+
 // WaitForCIResult is the output of WaitForCIActivity.
 type WaitForCIResult struct {
 	Outcome    CIOutcome
@@ -253,7 +266,7 @@ type ObservePRStateInput struct {
 }
 
 // ObservePRStateActivity polls the PR state until it is merged or closed.
-func (a *Activities) ObservePRStateActivity(ctx context.Context, in ObservePRStateInput) (CIOutcome, error) {
+func (a *Activities) ObservePRStateActivity(ctx context.Context, in ObservePRStateInput) (PROutcome, error) {
 	attempts := in.Attempts
 	if attempts == 0 {
 		attempts = 6
@@ -285,13 +298,13 @@ func (a *Activities) ObservePRStateActivity(ctx context.Context, in ObservePRSta
 
 		switch strings.ToUpper(pr.State) {
 		case "MERGED":
-			return CIOutcomeSuccess, nil
+			return PROutcomeMerged, nil
 		case "CLOSED":
-			return CIOutcomeExternallyClosed, nil
+			return PROutcomeClosedExternally, nil
 		}
 		sleep(ctx, interval)
 	}
-	return CIOutcomeMergeQueued, nil
+	return PROutcomeMergeQueued, nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
