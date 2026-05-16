@@ -128,6 +128,13 @@ func (a *Activities) WaitForCIActivity(ctx context.Context, in WaitForCIInput) (
 			return WaitForCIResult{Outcome: CIOutcomeExternallyClosed}, nil
 		}
 
+		// GitHub takes time to register checks after a push; an empty rollup
+		// does not mean CI passed — keep polling until at least one check appears.
+		if len(pr.StatusCheckRollup) == 0 {
+			sleep(ctx, pollInterval)
+			continue
+		}
+
 		allDone, anyFailed := true, false
 		var failedRuns []string
 		for _, check := range pr.StatusCheckRollup {
